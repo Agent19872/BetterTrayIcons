@@ -1,4 +1,5 @@
 import Clutter from 'gi://Clutter';
+import Cogl from 'gi://Cogl';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
@@ -550,10 +551,11 @@ function sanitizeId(s) {
         .replace(/^-+|-+$/g, '');
 }
 
+// The TrayManager's bg-color property is a CoglColor on GNOME 49/50.
 function parseCssColor(css) {
-    if (!css || !Clutter?.Color?.from_string)
+    if (!css)
         return null;
-    const [ok, parsed] = Clutter.Color.from_string(css);
+    const [ok, parsed] = Cogl.color_from_string(css);
     return ok ? parsed : null;
 }
 
