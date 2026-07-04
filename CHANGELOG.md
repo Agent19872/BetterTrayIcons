@@ -5,28 +5,28 @@
 
 ### Bug Fixes
 
-* **tray:** keep auto-hide panels visible while a context menu is open ([ed91117](https://github.com/nexaknight/BetterTrayIcons/commit/ed91117d444b9009a59e634f62f86c3827e66622))
+* **tray:** keep auto-hide panels visible while a context menu is open ([0b43f1d](https://github.com/nexaknight/BetterTrayIcons/commit/0b43f1dba7fd2b04000f513a5184bc5be2527419))
 
 ## [2.0.1](https://github.com/nexaknight/BetterTrayIcons/compare/v2.0.0...v2.0.1) (2026-07-04)
 
 
 ### Bug Fixes
 
-* **about:** correct the show-more card icon name ([e219f05](https://github.com/nexaknight/BetterTrayIcons/commit/e219f052a60dc65db0e4e056b6258ac27e914c1b))
+* **about:** correct the show-more card icon name ([3e4bcfb](https://github.com/nexaknight/BetterTrayIcons/commit/3e4bcfb8781de5aff1e970af03cc78bc17980adf))
 
 
 ### Performance Improvements
 
-* generate the dbusmenu proxy class once per process ([6e8f636](https://github.com/nexaknight/BetterTrayIcons/commit/6e8f6368e7f55e6cd553537562519e0f0021f369))
-* **prefs:** batch factory reset and import into one transaction ([48abaf0](https://github.com/nexaknight/BetterTrayIcons/commit/48abaf09260fe60bf95e46b808a3ab86dd34a218))
-* **prefs:** cache the system icon list across picker opens ([2a92fbc](https://github.com/nexaknight/BetterTrayIcons/commit/2a92fbc0586c7ba8c7c76df5a1e5a9da794ad2c1))
-* **prefs:** coalesce applications page rebuilds ([1c84c9d](https://github.com/nexaknight/BetterTrayIcons/commit/1c84c9d9efc8e9d17963c24c3510462b6d60480f))
-* **prefs:** defer about page artwork until the page is shown ([d118e6f](https://github.com/nexaknight/BetterTrayIcons/commit/d118e6f781ee1026db7344fbcd0486dbbe0fd016))
-* **prefs:** stop the sync dialog from stat-storming on keystrokes ([792c830](https://github.com/nexaknight/BetterTrayIcons/commit/792c830d51555c5d7874f9632947cecafc3c1601))
-* **sync:** make backup rotation and writes fully async ([5c5ff61](https://github.com/nexaknight/BetterTrayIcons/commit/5c5ff6135576e50cc359d86a35faad1b85e346e0))
-* **tray:** skip icon refetches for unrelated settings changes ([24a868f](https://github.com/nexaknight/BetterTrayIcons/commit/24a868ffd52f054952ca458986d8a63dd9e8e25f))
-* **tray:** trim d-bus traffic per icon update ([9200cb6](https://github.com/nexaknight/BetterTrayIcons/commit/9200cb67bd7a2edf8308a9810ba7f4919cfa5db0))
-* **tray:** write reorders as a single app-configs update ([5a5e248](https://github.com/nexaknight/BetterTrayIcons/commit/5a5e24872139d2e494216d250024277605f0020e))
+* generate the dbusmenu proxy class once per process ([9afa291](https://github.com/nexaknight/BetterTrayIcons/commit/9afa2914e8e45f4be170c29e1578a5a68c11b221))
+* **prefs:** batch factory reset and import into one transaction ([60bfb59](https://github.com/nexaknight/BetterTrayIcons/commit/60bfb5922631c49c19b15cf2092813853d84b090))
+* **prefs:** cache the system icon list across picker opens ([15686f0](https://github.com/nexaknight/BetterTrayIcons/commit/15686f0def91c4a60fcc4acf7274c59661b6d859))
+* **prefs:** coalesce applications page rebuilds ([6c8fb3d](https://github.com/nexaknight/BetterTrayIcons/commit/6c8fb3d6bfc6a223a9e54de222f1b412376249a9))
+* **prefs:** defer about page artwork until the page is shown ([16fca87](https://github.com/nexaknight/BetterTrayIcons/commit/16fca8793b3f7a40e8dcc8d87b22b8e7d4e71267))
+* **prefs:** stop the sync dialog from stat-storming on keystrokes ([1177d86](https://github.com/nexaknight/BetterTrayIcons/commit/1177d8653125d4832329330b5376d27ecd79837f))
+* **sync:** make backup rotation and writes fully async ([1a288d8](https://github.com/nexaknight/BetterTrayIcons/commit/1a288d87c154f8fa58884a55671cf30fb91194bc))
+* **tray:** skip icon refetches for unrelated settings changes ([3286e25](https://github.com/nexaknight/BetterTrayIcons/commit/3286e253c4265e0386d0976b26272dc3545cf46c))
+* **tray:** trim d-bus traffic per icon update ([af8ae48](https://github.com/nexaknight/BetterTrayIcons/commit/af8ae488569caae6000d4042ca719b91ef425d8b))
+* **tray:** write reorders as a single app-configs update ([991ffce](https://github.com/nexaknight/BetterTrayIcons/commit/991ffcef1279dfe86369bab6b667d8630bb0accf))
 
 ## [2.0.0](https://github.com/nexaknight/BetterTrayIcons/compare/v1.999.999...v2.0.0) (2026-05-14)
 
@@ -37,14 +37,14 @@
 
 ### Features
 
-* align versioning with EGO submission ([db04175](https://github.com/nexaknight/BetterTrayIcons/commit/db041754a72819d1d6837008478a515a27eaae72))
-* Initial release of Better Tray Icons ([3af1671](https://github.com/nexaknight/BetterTrayIcons/commit/3af167128fe890aa16a09645b071db67f98300f4))
+* align versioning with EGO submission ([bc7ab77](https://github.com/nexaknight/BetterTrayIcons/commit/bc7ab775e16be963507d6bc1f00dd749f40bae33))
+* Initial release of Better Tray Icons ([1ac8ebe](https://github.com/nexaknight/BetterTrayIcons/commit/1ac8ebebc645b3080c53ae67bd54cf3eb3f8e062))
 
 
 ### Bug Fixes
 
-* convert /proc and Steam manifest reads to async file IO ([c9fe4b0](https://github.com/nexaknight/BetterTrayIcons/commit/c9fe4b0b13e64ebedfb2a9f052180a715980df53))
-* keep overflow popup open when tray icon updates ([06b6936](https://github.com/nexaknight/BetterTrayIcons/commit/06b6936c5a3d0ce9787a11ad587243ab8e3ccd7e))
-* prevent signal leak and use async file IO ([8a29670](https://github.com/nexaknight/BetterTrayIcons/commit/8a29670f339626cdb8987238705c4ca877542665))
+* convert /proc and Steam manifest reads to async file IO ([a33f316](https://github.com/nexaknight/BetterTrayIcons/commit/a33f31650b1f20623cb9c6ff522569fca5b028f4))
+* keep overflow popup open when tray icon updates ([8a62426](https://github.com/nexaknight/BetterTrayIcons/commit/8a6242603c8d56f32dbfa1a4642091178e87acdc))
+* prevent signal leak and use async file IO ([4a9fcf6](https://github.com/nexaknight/BetterTrayIcons/commit/4a9fcf6a58349846655c58712ffca4c2bf921689))
 
 ## Changelog
