@@ -227,4 +227,5 @@ export const MAX_CONTRIBUTORS = 5;
 // See CONTRIBUTING.md for the opt-out procedure.
 export const CONTRIBUTORS_OPTOUT = new Set([
     'github-actions[bot]',
+    'dependabot[bot]',
 ]);
