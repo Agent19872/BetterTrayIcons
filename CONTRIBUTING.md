@@ -97,7 +97,7 @@ Translations live in `po/`. Full workflow, tools and acceptance rules over at th
 Match the existing project structure when adding files. Dev setup and how to point GNOME Shell at your working tree are on the [Installation wiki page](../../wiki/Installation).
 
 ```
-eextension.js             # entry point loaded by gnome-shell
+extension.js              # entry point loaded by gnome-shell
 prefs.js                  # entry point loaded by the Adwaita preferences window
 metadata.json             # extension manifest read by gnome-shell
 schemas/                  # GSettings schema, compiled with glib-compile-schemas
@@ -111,11 +111,10 @@ src/
 │   ├── features/         # click controller, drag-and-drop, tooltip
 │   └── utils/            # shell-side helpers (icons, dbus, actor)
 └── prefs/                # code running inside the preferences window
-├── pages/                # top-level prefs pages (general, appearance, actions, applications, about)
-├── subpages/             # drill-down pages (toggle button settings, app editor)
-├── dialogs/              # modal dialogs such as the sync dialog
-├── widgets/              # composite widget classes (icon picker, action config)
-└── utils/                # prefs-side helpers (widgets, rows, dialogs, theme)
+    ├── pages/            # top-level prefs pages (general, appearance, actions, applications, about)
+    ├── subpages/         # drill-down pages (overflow menu, toggle button, tray icons)
+    ├── dialogs/          # modal dialogs such as the app editor and the sync dialog
+    └── widgets/          # composite widget classes (icon picker, action config)
 ```
 
 Branching workflow:
@@ -169,9 +168,9 @@ Common types:
 Examples:
 
 ```
-feat: Add per-app icon override
-fix: Restore tooltip position when the panel is on the left
-docs: Document the sync dialog
+feat: add per-app icon override
+fix: restore tooltip position when the panel is on the left
+docs: document the sync dialog
 ```
 
 Keep the subject under 72 characters. The body, when present, explains the motivation, not the diff.
@@ -187,7 +186,7 @@ Shell-side code also has to follow the [GNOME review guidelines](https://gjs.gui
 
 A few rules the linter and the GNOME guidelines don't explicitly cover:
 
-- Use existing helpers in `src/shared/` and `src/prefs/utils/` before introducing new abstractions.
+- Use existing helpers in `src/shared/` and `src/prefs/widgets/` before introducing new abstractions.
 - No runtime dependencies on external libraries. Only the dev dependencies for linting and JSDoc are allowed.
 - Keep new user-facing strings translatable.
 
