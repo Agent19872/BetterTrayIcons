@@ -53,16 +53,8 @@ export class OverflowMenu {
         this.recreateContainer();
     }
 
-    get menu() {
-        return this._menu;
-    }
-
     get container() {
         return this._container;
-    }
-
-    get layoutMode() {
-        return this._currentLayoutMode;
     }
 
     get isOpen() {

@@ -4,9 +4,7 @@ import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions
 
 import {connectScoped} from '../../shared/lifecycle.js';
 import {createIconButton} from './gtkHelpers.js';
-import {
-    createComboRow, createSpinRow, createSwitchRow, createColorRow, createEntryRow,
-} from './rows.js';
+import {createComboRow} from './rows.js';
 
 export default class ActionConfigWidget extends Adw.Dialog {
     static {
@@ -69,22 +67,11 @@ export default class ActionConfigWidget extends Adw.Dialog {
     }
 
     _createRow(conf) {
-        switch (conf.type) {
-        case 'combo':
-            return createComboRow(conf.title, conf.subtitle, this._settings, conf.key, conf.options, conf.values, {
-                experimentalValues: conf.experimentalValues,
-            });
-        case 'spin':
-            return createSpinRow(conf.title, this._settings, conf.key, conf.min || 0, conf.max || 100, conf.step || 1);
-        case 'switch':
-            return createSwitchRow(conf.title, conf.subtitle, this._settings, conf.key);
-        case 'color':
-            return createColorRow(conf.title, this._settings, conf.key);
-        case 'entry':
-            return createEntryRow(conf.title, this._settings, conf.key);
-        default:
+        if (conf.type !== 'combo')
             return null;
-        }
+        return createComboRow(conf.title, conf.subtitle, this._settings, conf.key, conf.options, conf.values, {
+            experimentalValues: conf.experimentalValues,
+        });
     }
 
     // Reveal an info banner whenever the dialog's `*-double` config is non-default.

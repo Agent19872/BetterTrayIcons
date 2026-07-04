@@ -104,10 +104,6 @@ export function createImage(params = {}) {
     return image;
 }
 
-export function createStringList(strings = []) {
-    return new Gtk.StringList({strings});
-}
-
 export function createAdjustment(params = {}) {
     return new Gtk.Adjustment(params);
 }

@@ -110,12 +110,6 @@ export function createSwitchRow(title, subtitle, settings, key, options = {}) {
     return row;
 }
 
-export function createEntryRow(title, settings, key) {
-    const row = new Adw.EntryRow({title, show_apply_button: true});
-    settings.bind(key, row, 'text', Gio.SettingsBindFlags.DEFAULT);
-    return row;
-}
-
 export function createSubpageRow(title, subtitle, window, SubpageClass, settings, dependencyKey = null) {
     const row = new Adw.ActionRow({
         title,

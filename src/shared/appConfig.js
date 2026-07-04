@@ -99,17 +99,6 @@ export function setAppPriorities(settings, appIdsInOrder) {
         settings.set_string('app-configs', JSON.stringify(map));
 }
 
-export function removeAppConfigKey(settings, appId, key) {
-    if (!settings || !appId)
-        return;
-    const map = getAppConfigMap(settings);
-    if (!map[appId])
-        return;
-
-    delete map[appId][key];
-    settings.set_string('app-configs', JSON.stringify(map));
-}
-
 export function deleteAppConfig(settings, appId) {
     if (!settings || !appId)
         return;
