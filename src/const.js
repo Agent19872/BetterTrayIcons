@@ -167,7 +167,8 @@ export const LEGACY_ID_PATTERNS = Object.freeze([
 // ------- Styling defaults -------
 
 export const DEFAULT_HOVER_BG_COLOR = 'rgba(255,255,255,0.1)';
-// Mirrors PopupAnimation.NONE. Avoids BoxPointer (removed in GNOME 50).
+// Mirrors PopupAnimation.NONE. const.js is also loaded by the prefs
+// process, which can't import the shell's ui modules.
 export const POPUP_ANIMATION_NONE = 0;
 
 
