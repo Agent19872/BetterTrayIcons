@@ -372,7 +372,7 @@ function _buildBackupHistoryGroup(page, pathRow, dialog, toast, settings, onAfte
 
 function _buildBackupRow({path, index, mtime, pathRow, dialog, toast, settings, onAfterAction}) {
     const label = mtime
-        ? `${_('Backup')} ${index} — ${mtime.format('%Y-%m-%d %H:%M')}`
+        ? `${_('Backup')} ${index} · ${mtime.format('%Y-%m-%d %H:%M')}`
         : `${_('Backup')} ${index}`;
     const row = new Adw.ActionRow({title: label});
 
