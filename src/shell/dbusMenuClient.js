@@ -7,6 +7,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {warn} from '../shared/logging.js';
 import {clearIds, removeTimer} from '../shared/lifecycle.js';
 import {loadInterfaceXML} from './utils/dbus.js';
+import {isDisposed} from './utils/actor.js';
 import {GEOMETRY_SETTLE_MS, DBUS_MENU_YIELD_EVERY_N_ITEMS} from '../const.js';
 
 // One generated proxy class per process. Every icon builds its own
@@ -56,12 +57,12 @@ export class DBusMenuClient {
         }
 
         await this._parseNode(layout, gnomeMenu);
+        this._pinMenuWidth(gnomeMenu);
     }
 
     async _parseNode(node, parent) {
-        const unpacked = node instanceof GLib.Variant ? node.deep_unpack() : node;
-
-        if (!unpacked || unpacked.length < 3)
+        const unpacked = this._unpackNode(node);
+        if (!unpacked)
             return;
 
         const id = unpacked[0];
@@ -75,17 +76,7 @@ export class DBusMenuClient {
         };
 
         if (id === 0) {
-            if (children && children.length > 0) {
-                // Sequential awaits are intentional: we yield to the main loop
-                // every N items so large menus don't block the UI thread.
-                /* eslint-disable no-await-in-loop */
-                for (let i = 0; i < children.length; i++) {
-                    await this._parseNode(children[i], parent);
-                    if (i > 0 && i % DBUS_MENU_YIELD_EVERY_N_ITEMS === 0)
-                        await this._yieldToMainLoop();
-                }
-                /* eslint-enable no-await-in-loop */
-            }
+            await this._parseChildren(children, parent);
             return;
         }
 
@@ -111,26 +102,12 @@ export class DBusMenuClient {
             if (hasChildren) {
                 item = new PopupMenu.PopupSubMenuMenuItem(label);
 
-                // Lazy load: populate the submenu only when it opens.
-                let loaded = false;
-                const populateSubMenu = async () => {
-                    if (loaded)
-                        return;
-                    loaded = true;
-                    // Same sequential-with-yield pattern as the top-level loop.
-                    /* eslint-disable no-await-in-loop */
-                    for (let i = 0; i < children.length; i++) {
-                        await this._parseNode(children[i], item.menu);
-                        if (i > 0 && i % DBUS_MENU_YIELD_EVERY_N_ITEMS === 0)
-                            await this._yieldToMainLoop();
-                    }
-                    /* eslint-enable no-await-in-loop */
-                };
+                // The shell refuses to open an empty submenu, so the items
+                // have to exist before the first click can expand it.
+                await this._parseChildren(children, item.menu);
 
-                item.menu.connect('open-state-changed', (menu, isOpen) => {
-                    if (isOpen)
-                        populateSubMenu();
-                });
+                item.menu.connect('open-state-changed',
+                    (menu, isOpen) => this._onSubMenuToggled(id, menu, isOpen));
             } else {
                 item = new PopupMenu.PopupMenuItem(label);
 
@@ -159,24 +136,74 @@ export class DBusMenuClient {
         }
     }
 
-    _yieldToMainLoop() {
-        return new Promise(resolve => {
-            const id = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-                this._pendingYieldIds.delete(id);
-                resolve();
-                return GLib.SOURCE_REMOVE;
-            });
-            this._pendingYieldIds.add(id);
-        });
+    async _parseChildren(children, parent) {
+        if (!children || children.length === 0)
+            return;
+
+        // Sequential awaits are intentional: we yield to the main loop
+        // every N items so large menus don't block the UI thread.
+        /* eslint-disable no-await-in-loop */
+        for (let i = 0; i < children.length; i++) {
+            await this._parseNode(children[i], parent);
+            if (i > 0 && i % DBUS_MENU_YIELD_EVERY_N_ITEMS === 0)
+                await this._yieldToMainLoop();
+        }
+        /* eslint-enable no-await-in-loop */
+    }
+
+    _onSubMenuToggled(id, submenu, isOpen) {
+        this._sendEvent(id, isOpen ? 'opened' : 'closed');
+
+        if (isOpen) {
+            this._refreshSubMenu(id, submenu)
+                .catch(err => warn(`DBusMenu Refresh Error: ${err.message}`));
+        }
+    }
+
+    // Apps with dynamic menus fill a subtree server-side only on
+    // AboutToShow, so the children from the initial GetLayout can be
+    // stale or empty.
+    async _refreshSubMenu(id, submenu) {
+        if (!this.proxy)
+            return;
+
+        const [needUpdate] = await this.proxy.AboutToShowAsync(id);
+        if (!needUpdate || !this.proxy)
+            return;
+
+        const [, layout] = await this.proxy.GetLayoutAsync(id, -1, []);
+        const node = this._unpackNode(layout);
+
+        // The menu can be torn down while the calls are in flight.
+        if (!node || !this.proxy || isDisposed(submenu.actor))
+            return;
+
+        submenu.removeAll();
+        await this._parseChildren(node[2], submenu);
+        this._pinMenuWidth(submenu._getTopMenu());
+    }
+
+    // Submenus sit collapsed inside the menu box, so opening one would
+    // widen the whole menu and closing it would shrink it back.
+    // Pinning to the widest subtree up front keeps the width steady.
+    _pinMenuWidth(topMenu) {
+        // The measured width is already scaled, CSS px would scale again.
+        const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
+        const width = Math.ceil(this._maxNaturalWidth(topMenu) / scale);
+        topMenu.box.style = `min-width: ${width}px`;
+    }
+
+    _maxNaturalWidth(menu) {
+        let [, width] = menu.box.get_preferred_width(-1);
+        for (const item of menu._getMenuItems()) {
+            if (item.menu)
+                width = Math.max(width, this._maxNaturalWidth(item.menu));
+        }
+        return width;
     }
 
     _onItemClicked(id, parentMenu) {
-        const time = Clutter.get_current_event_time();
-
-        if (this.proxy) {
-            this.proxy.EventAsync(id, 'clicked', new GLib.Variant('s', ''), time)
-                .catch(err => warn(`DBusMenu Click Error: ${err.message}`));
-        }
+        this._sendEvent(id, 'clicked');
 
         // Walk up the parent chain to find the outermost PopupMenu. Submenus
         // expose `_parent`. The top-level PopupMenu reaches itself via the
@@ -204,6 +231,31 @@ export class DBusMenuClient {
                 return GLib.SOURCE_REMOVE;
             });
         }
+    }
+
+    _sendEvent(id, eventId) {
+        if (!this.proxy)
+            return;
+
+        const time = Clutter.get_current_event_time();
+        this.proxy.EventAsync(id, eventId, new GLib.Variant('s', ''), time)
+            .catch(err => warn(`DBusMenu Event Error (${eventId}): ${err.message}`));
+    }
+
+    _unpackNode(node) {
+        const unpacked = node instanceof GLib.Variant ? node.deep_unpack() : node;
+        return unpacked && unpacked.length >= 3 ? unpacked : null;
+    }
+
+    _yieldToMainLoop() {
+        return new Promise(resolve => {
+            const id = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                this._pendingYieldIds.delete(id);
+                resolve();
+                return GLib.SOURCE_REMOVE;
+            });
+            this._pendingYieldIds.add(id);
+        });
     }
 
     destroy() {
