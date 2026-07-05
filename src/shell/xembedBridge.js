@@ -7,7 +7,7 @@ import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {warn, error} from '../shared/logging.js';
-import {updateAppConfig} from '../shared/appConfig.js';
+import {formatAppName, getAppConfigMap, updateAppConfig} from '../shared/appConfig.js';
 import {readFileBytes} from '../shared/fetch.js';
 import {clearIds, disconnectSignal, disconnectAll, disposeAll, removeTimer} from '../shared/lifecycle.js';
 import {
@@ -15,6 +15,7 @@ import {
     setupIconDragSource,
     forwardDragStateToIndicator,
 } from './features/dragAndDrop.js';
+import {Tooltip} from './features/tooltip.js';
 import {computeTrayIconStyle} from './utils/actor.js';
 import {
     DRAG_SETTING_KEYS,
@@ -222,6 +223,7 @@ class XEmbedTrayIcon {
         this._actorSignals = [];
         this._settingsSignals = [];
         this._draggable = null;
+        this._tooltip = null;
 
         this.appId = meta.appId;
         // pid in the id prevents collisions between two instances of the
@@ -240,6 +242,12 @@ class XEmbedTrayIcon {
         this.actor._appId = this.appId;
         this.actor.set_child(rawIcon);
 
+        try {
+            this._tooltip = new Tooltip(this.actor, this._settings);
+        } catch (e) {
+            warn(`XEmbedTrayIcon: Failed to create tooltip for ${this.id}: ${e.message}`);
+        }
+
         this._applyIconSize();
         this._updateStyle();
         this._connectSignals();
@@ -250,6 +258,7 @@ class XEmbedTrayIcon {
             is_wine: meta.isWine,
             is_proton: meta.isProton,
         });
+        this._updateTitle();
     }
 
     _connectSignals() {
@@ -272,7 +281,10 @@ class XEmbedTrayIcon {
                 this._updateHoverState();
                 return Clutter.EVENT_PROPAGATE;
             }),
-            this.actor.connect('notify::hover', () => this._updateHoverState())
+            this.actor.connect('notify::hover', () => {
+                this._updateHoverState();
+                this._syncTooltip();
+            })
         );
 
         this._sigIconDestroy = this._icon.connect('destroy', () => {
@@ -288,6 +300,12 @@ class XEmbedTrayIcon {
             this._settingsSignals.push(this._settings.connect(`changed::${key}`,
                 () => this._updateStyle()));
         }
+
+        // Renames from the prefs dialog land in app-configs.
+        this._settingsSignals.push(
+            this._settings.connect('changed::app-configs', () => this._updateTitle()),
+            this._settings.connect('changed::enable-tooltips', () => this._updateTitle())
+        );
     }
 
     _setupDrag() {
@@ -300,6 +318,10 @@ class XEmbedTrayIcon {
                 if (this._isDestroyed || !this.actor)
                     return;
                 this.actor.opacity = isDragging ? DRAGGING_SOURCE_OPACITY : 255;
+                // Same stuck-tooltip trap as the SNI wrapper: hover doesn't
+                // re-fire after a drag ends with the pointer still on the icon.
+                if (this._tooltip)
+                    this._tooltip.hide();
             },
             onForwardedDragStateChange: this._onDragStateChange,
         });
@@ -362,12 +384,34 @@ class XEmbedTrayIcon {
         this.actor.set_style(this.actor.hover ? this._hoverStyle : this._baseStyle);
     }
 
+    _syncTooltip() {
+        if (!this._tooltip)
+            return;
+        if (this.actor.hover && this._settings.get_boolean('enable-tooltips'))
+            this._tooltip.trigger();
+        else
+            this._tooltip.hide();
+    }
+
+    // XEmbed has no tooltip protocol and Wine leaves the icon window's
+    // WM_NAME empty, so the tooltip falls back to the resolved app name.
+    _updateTitle() {
+        if (this._isDestroyed)
+            return;
+        const config = getAppConfigMap(this._settings)[this.appId] ?? {};
+        const title = config.custom_title || formatAppName(config.title || this.appId);
+        const showTooltip = this._settings.get_boolean('enable-tooltips');
+        this.actor.accessible_name = showTooltip ? title : '';
+        if (this._tooltip)
+            this._tooltip.text = title;
+    }
+
     destroy() {
         if (this._isDestroyed)
             return;
         this._isDestroyed = true;
 
-        disposeAll(this, 'destroy', '_draggable');
+        disposeAll(this, 'destroy', '_draggable', '_tooltip');
         clearIds(this, removeTimer, '_pendingClickId');
         disconnectAll(this, this._settings, '_settingsSignals');
         disconnectAll(this, this.actor, '_actorSignals');
