@@ -61,6 +61,21 @@ jobs:
           UUID: ${{ steps.check.outputs.uuid }}
         run: mv "${UUID}.shell-extension.zip" "${UUID}.zip"
 
+      - name: Add compiled schema for manual installs
+        if: steps.check.outputs.is_release == 'true'
+        env:
+          UUID: ${{ steps.check.outputs.uuid }}
+        run: |
+          # EGO and the gnome-extensions tool compile schemas during
+          # install, manual unzips from the release page don't. The EGO
+          # submission zip has to stay clean of gschemas.compiled (shexli
+          # flags it for 45+ targets), so only this asset gets it.
+          if ! command -v glib-compile-schemas > /dev/null; then
+            sudo apt-get update && sudo apt-get install -y libglib2.0-bin
+          fi
+          glib-compile-schemas schemas/
+          zip "${UUID}.zip" schemas/gschemas.compiled
+
       - name: Wait for Release Please to create the release
         if: steps.check.outputs.is_release == 'true'
         env:
