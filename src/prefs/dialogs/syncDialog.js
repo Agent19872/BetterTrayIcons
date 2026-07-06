@@ -46,7 +46,7 @@ export function openSyncDialog(parentWindow, settings, openJsonFileChooser) {
     };
 
     // Typing in the path row fires per keystroke and each probe below can
-    // stat a remote mount. One shared debounce covers them all; `immediate`
+    // stat a remote mount. One shared debounce covers them all. `immediate`
     // skips it after Push/Pull/Delete so the rows update right away.
     let refreshDebounceId = 0;
     refreshAll = ({immediate = false} = {}) => {

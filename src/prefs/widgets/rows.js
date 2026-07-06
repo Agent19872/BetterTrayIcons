@@ -290,7 +290,7 @@ export function createIconColorPair(parent, settings, keyPrefix) {
     }));
 }
 
-// `experimental: true` pins the badge on; `experimentalValues` shows it only
+// `experimental: true` pins the badge on. `experimentalValues` shows it only
 // when the current setting matches one of those values.
 function _applyExperimental(row, options, settings, key) {
     if (options.experimental) {

@@ -17,7 +17,8 @@ export default class BetterTrayIconsExtension extends Extension {
     enable() {
         this.initTranslations();
 
-        // Defer init to avoid races with other extensions during shell startup.
+        // Defer one mainloop iteration so a conflicting tray extension's
+        // teardown can release the SNI name and X11 tray selection first.
         this._enableTimeoutId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
             this._enableTimeoutId = 0;
             this._realEnable();

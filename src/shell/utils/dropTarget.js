@@ -1,6 +1,6 @@
 // DND passes the DraggableTrayIcon wrapper directly via actor._delegate.
-// The fallback paths cover older GNOME versions that surfaced the raw
-// actor or proxy instead.
+// The fallback paths resolve the raw actor and the DND.Draggable shapes
+// through the _draggableItem back-links kept by dragAndDrop.js.
 export function getDraggableFromSource(source) {
     if (!source)
         return null;
