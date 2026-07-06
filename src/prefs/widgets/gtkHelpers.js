@@ -44,6 +44,11 @@ export function attachBadge(row, text, {variant = 'warning'} = {}) {
 }
 
 export function createButton({label, iconName, cssClasses = [], callback, ...props}) {
+    for (const key of ['halign', 'valign']) {
+        if (typeof props[key] === 'string')
+            props[key] = _getAlign(props[key]);
+    }
+
     const params = {valign: Gtk.Align.CENTER, ...props};
     if (label !== undefined)
         params.label = label;
@@ -57,7 +62,6 @@ export function createButton({label, iconName, cssClasses = [], callback, ...pro
     return btn;
 }
 
-// Flat + circular defaults to match the reset/sync buttons.
 export function createIconButton(iconName, {circular = true, flat = true, extraClasses = [], ...props} = {}) {
     const classes = [];
     if (flat)
