@@ -15,6 +15,7 @@ export class SniWatcher {
         this._settings = settings;
 
         this._items = new Map();
+        this._pending = new Map();
         this._dbusImpl = null;
 
         this._kdeWatcherId = 0;
@@ -101,6 +102,11 @@ export class SniWatcher {
             for (const item of Array.from(this._items.values())) {
                 if (item.busName === name)
                     item.destroy();
+            }
+
+            for (const [id, pendingBusName] of Array.from(this._pending)) {
+                if (pendingBusName === name)
+                    this._pending.delete(id);
             }
         }
     }
@@ -232,23 +238,26 @@ export class SniWatcher {
 
         const id = getUniqueId(busName, objectPath);
 
-        if (this._items.has(id))
+        if (this._items.has(id) || this._pending.has(id))
             return;
+
+        this._pending.set(id, busName);
 
         new this._itemProxyClass(
             Gio.DBus.session,
             busName,
             objectPath,
             (proxy, proxyError) => {
+                // The owner died mid-registration or the watcher was disabled.
+                // Inserting anyway would leave a ghost icon that no cleanup ever
+                // catches, NameOwnerChanged only sees items already in the map.
+                if (!this._pending.delete(id))
+                    return;
+
                 if (proxyError) {
                     warn(`SniWatcher: Failed to create proxy for ${id}: ${proxyError.message}`);
                     return;
                 }
-
-                // State may have changed during async proxy creation, so re-check
-                // before registering.
-                if (!this._dbusImpl || this._items.has(id))
-                    return;
 
                 const item = new TrayIcon(
                     this._extensionDir,
@@ -286,5 +295,6 @@ export class SniWatcher {
 
         this._items.forEach(item => item.destroy());
         this._items.clear();
+        this._pending.clear();
     }
 }
