@@ -136,6 +136,27 @@ export const WINE_LAUNCHER_BINARIES = new Set([
     'wineserver', 'wineboot', 'winemenubuilder.exe',
 ]);
 
+// wm_class Wine assigns under Steam and umu, used as the Proton indicator.
+// A real appid suffix only repeats what the env walk already yields, and
+// umu stamps the same placeholder on every app, so steam_app_* never
+// identifies an app.
+export const STEAM_APP_WMCLASS_RE = /^steam_app_/i;
+
+// Window classes that name the Wine build instead of the app, never usable
+// as app id, the launcher or prefix name wins over them. explorer.exe is
+// here because one explorer process owns every XEmbed tray window in a prefix.
+export const PLACEHOLDER_WMCLASS_RE = /^(steam_app_.*|steam_proton|explorer(\.exe)?)$/i;
+
+// GAMEID/UMU_ID values umu falls back to when no game id is configured.
+export const GENERIC_UMU_GAME_IDS = new Set(['umu-default', 'default', '0']);
+
+// Per-app env vars launchers stamp on their games, inherited by the
+// prefix's explorer.exe. Faugus sets FAUGUSID, Heroic HEROIC_APP_NAME,
+// Lutris GAME_NAME. Ordered by how specific they are.
+export const WINE_LAUNCHER_ENV_KEYS = Object.freeze(['FAUGUSID', 'HEROIC_APP_NAME', 'GAME_NAME']);
+
+export const PROC_WALK_MAX_DEPTH = 5;
+
 
 // ------- Geometry helpers -------
 

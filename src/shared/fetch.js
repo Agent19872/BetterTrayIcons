@@ -38,3 +38,44 @@ export function readFileBytes(file, cancellable = null) {
         });
     });
 }
+
+// next_files_async returns at most the requested count, so drain in batches.
+export function readDirNames(file, cancellable = null) {
+    return new Promise((resolve, reject) => {
+        file.enumerate_children_async(
+            'standard::name',
+            Gio.FileQueryInfoFlags.NONE,
+            GLib.PRIORITY_DEFAULT,
+            cancellable,
+            (obj, res) => {
+                let enumerator;
+                try {
+                    enumerator = obj.enumerate_children_finish(res);
+                } catch (e) {
+                    reject(e);
+                    return;
+                }
+
+                const names = [];
+                const batchSize = 250;
+                const drain = () => enumerator.next_files_async(
+                    batchSize, GLib.PRIORITY_DEFAULT, cancellable, (_e, r) => {
+                        try {
+                            const infos = enumerator.next_files_finish(r);
+                            if (infos.length === 0) {
+                                enumerator.close_async(GLib.PRIORITY_DEFAULT, null, () => {});
+                                resolve(names);
+                                return;
+                            }
+                            for (const info of infos)
+                                names.push(info.get_name());
+                            drain();
+                        } catch (e) {
+                            reject(e);
+                        }
+                    });
+                drain();
+            }
+        );
+    });
+}
