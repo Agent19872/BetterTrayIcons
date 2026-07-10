@@ -17,6 +17,7 @@ export class OverflowMenu {
 
         this._cachedBaseStyle = '';
         this._enableCustomStyle = false;
+        this._attached = false;
 
         this._currentLayoutMode = settings.get_string('overflow-layout-mode');
         this._lastColumnLimit = settings.get_int('grid-column-limit');
@@ -59,6 +60,10 @@ export class OverflowMenu {
 
     get isOpen() {
         return this._menu?.isOpen;
+    }
+
+    get isAttached() {
+        return this._attached;
     }
 
     recreateContainer() {
@@ -219,13 +224,16 @@ export class OverflowMenu {
     }
 
     attachToManager() {
-        if (Main.panel.menuManager)
+        if (Main.panel.menuManager) {
             Main.panel.menuManager.addMenu(this._menu);
+            this._attached = true;
+        }
     }
 
     detachFromManager() {
         if (Main.panel.menuManager)
             Main.panel.menuManager.removeMenu(this._menu);
+        this._attached = false;
     }
 
     open() {

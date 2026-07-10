@@ -364,6 +364,11 @@
             <summary>Long right press action on the toggle button</summary>
         </key>
 
+        <key name="toggle-hover-menu" type="s">
+            <default>'overflow'</default>
+            <summary>Which menu opens when hovering the toggle while another panel menu is open</summary>
+        </key>
+
         <!-- Sync -->
         <key name="sync-file-path" type="s">
             <default>''</default>

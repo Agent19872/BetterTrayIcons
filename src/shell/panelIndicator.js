@@ -121,6 +121,9 @@ export const PanelIndicator = GObject.registerClass(
                     this._queueUpdateLayout();
             }));
 
+            this._settingsSignals.push(this._settings.connect('changed::toggle-hover-menu',
+                () => this._applyHoverMenuOrder()));
+
             // Inherit mode reads any icon-* key, so match by prefix.
             const STYLE_KEY_PREFIXES = ['toggle-', 'overflow-container-', 'icon-', 'enable-custom-'];
             this._settingsSignals.push(this._settings.connect('changed', (_settings, key) => {
@@ -248,6 +251,35 @@ export const PanelIndicator = GObject.registerClass(
             this._actionMenu.addMenuItem(prefsItem);
         }
 
+        _applyHoverMenuOrder() {
+            const manager = Main.panel.menuManager;
+            if (!manager || !this._overflowMenu?.isAttached)
+                return;
+
+            // The hover switch only picks between menus already in the manager,
+            // so the lazily built action menu has to exist before its first open.
+            this._ensureActionMenu();
+
+            // removeMenu on an open menu drops its modal grab.
+            if (this._actionMenu.isOpen || this._overflowMenu.isOpen)
+                return;
+
+            // Both menus share the toggle as source actor, and the manager opens
+            // the first match it finds, so their order picks the hover menu.
+            const actionFirst = this._settings.get_string('toggle-hover-menu') === 'action-menu';
+
+            manager.removeMenu(this._actionMenu);
+            this._overflowMenu.detachFromManager();
+
+            if (actionFirst) {
+                manager.addMenu(this._actionMenu);
+                this._overflowMenu.attachToManager();
+            } else {
+                this._overflowMenu.attachToManager();
+                manager.addMenu(this._actionMenu);
+            }
+        }
+
         _queueUpdateLayout() {
             clearIds(this, removeTimer, '_layoutUpdateId');
             this._layoutUpdateId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, LAYOUT_UPDATE_DELAY_MS, () => {
@@ -313,6 +345,7 @@ export const PanelIndicator = GObject.registerClass(
             if (hasOverflow) {
                 this._overflowMenu.attachToManager();
                 this._toggleButton.show();
+                this._applyHoverMenuOrder();
             } else {
                 this._overflowMenu.close();
                 this._overflowMenu.detachFromManager();
@@ -453,6 +486,7 @@ export const PanelIndicator = GObject.registerClass(
             if (this._menuRemovedForDrag) {
                 this._menuRemovedForDrag = false;
                 this._overflowMenu?.attachToManager();
+                this._applyHoverMenuOrder();
             }
         }
 

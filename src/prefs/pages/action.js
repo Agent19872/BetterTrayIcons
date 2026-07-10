@@ -2,7 +2,7 @@ import Adw from 'gi://Adw';
 import GObject from 'gi://GObject';
 import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-import {createComplexActionRow} from '../widgets/rows.js';
+import {createComplexActionRow, createComboRow} from '../widgets/rows.js';
 import ActionConfigWidget from '../widgets/actionConfigWidget.js';
 
 export class ActionPage extends Adw.PreferencesPage {
@@ -71,6 +71,15 @@ export class ActionPage extends Adw.PreferencesPage {
             longOptions: this.toggleOptions,
             longValues: this.toggleValues,
         });
+
+        group.add(createComboRow(
+            _('Menu on Hover'),
+            _('Which menu opens when you hover the toggle button'),
+            this._settings,
+            'toggle-hover-menu',
+            [_('Overflow Popup'), _('Action Menu')],
+            ['overflow', 'action-menu']
+        ));
     }
 
     _addClickRows(group, {keyPrefix, options, values, longOptions, longValues}) {
