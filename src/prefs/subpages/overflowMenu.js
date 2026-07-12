@@ -15,6 +15,7 @@ export default class OverflowMenuSubpage extends Adw.NavigationPage {
             tag: 'overflow_menu_settings',
         });
 
+        this._window = window;
         this._settings = settings;
         this._settingsKeys = [
             'overflow-container-padding-top',
@@ -26,6 +27,7 @@ export default class OverflowMenuSubpage extends Adw.NavigationPage {
             'overflow-container-margin-left',
             'overflow-container-margin-right',
             'overflow-container-background-color',
+            'overflow-container-background-use-accent-color',
             'overflow-container-border-radius',
         ];
 
@@ -37,7 +39,16 @@ export default class OverflowMenuSubpage extends Adw.NavigationPage {
 
         const groupStyle = new Adw.PreferencesGroup({title: _('Style')});
         contentPage.add(groupStyle);
-        groupStyle.add(createColorRow(_('Background'), this._settings, 'overflow-container-background-color'));
+        groupStyle.add(createColorRow(_('Background'), this._settings, 'overflow-container-background-color', {
+            parent: this._window,
+            accentKey: 'overflow-container-background-use-accent-color',
+            variants: {
+                title: _('Background Color'),
+                items: [
+                    {type: 'switch', title: _('Use Accent Color'), key: 'overflow-container-background-use-accent-color'},
+                ],
+            },
+        }));
         groupStyle.add(createSpinRow(_('Corner Radius (px)'), this._settings, 'overflow-container-border-radius', 0, 50));
 
         contentPage.add(createBoxSidesGroup(_('Padding'), this._settings, 'overflow-container-padding'));

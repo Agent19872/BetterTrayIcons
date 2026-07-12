@@ -93,6 +93,10 @@ export const TRAY_STYLE_KEYS = Object.freeze([
     'icon-hover-color',
     'icon-background-color',
     'icon-hover-background-color',
+    'icon-use-accent-color',
+    'icon-hover-use-accent-color',
+    'icon-background-use-accent-color',
+    'icon-hover-background-use-accent-color',
 ]);
 
 // Config entry fields a tray icon renders from. Lets an icon skip the
@@ -117,6 +121,8 @@ export const XEMBED_STYLE_KEYS = Object.freeze([
     'icon-border-radius',
     'icon-background-color',
     'icon-hover-background-color',
+    'icon-background-use-accent-color',
+    'icon-hover-background-use-accent-color',
 ]);
 // Fallback when no custom overflow background is set, roughly matches the
 // shell panel background.
@@ -190,6 +196,9 @@ export const LEGACY_ID_PATTERNS = Object.freeze([
 // ------- Styling defaults -------
 
 export const DEFAULT_HOVER_BG_COLOR = 'rgba(255,255,255,0.1)';
+// St resolves this to the live system accent color and re-styles when the
+// accent changes, so an element using it tracks the accent on its own.
+export const ST_ACCENT_COLOR = '-st-accent-color';
 // Mirrors PopupAnimation.NONE. const.js is also loaded by the prefs
 // process, which can't import the shell's ui modules.
 export const POPUP_ANIMATION_NONE = 0;

@@ -119,9 +119,20 @@ export function openStyleDialog(parentWindow, settings, {title, description = ''
     page.add(group);
 
     items.forEach(item => {
-        if (item.type === 'color' && item.key) {
+        if (!item.key)
+            return;
+        if (item.type === 'switch') {
+            const row = new Adw.SwitchRow({title: item.title});
+            settings.bind(item.key, row, 'active', Gio.SettingsBindFlags.DEFAULT);
+            group.add(row);
+        } else if (item.type === 'color') {
             const row = new Adw.ActionRow({title: item.title});
             row.add_suffix(createColorButton(settings, item.key, item.title));
+            // A hover color the accent overrides has nothing left to pick.
+            if (item.hiddenByKey) {
+                settings.bind(item.hiddenByKey, row, 'visible',
+                    Gio.SettingsBindFlags.GET | Gio.SettingsBindFlags.INVERT_BOOLEAN);
+            }
             group.add(row);
         }
     });

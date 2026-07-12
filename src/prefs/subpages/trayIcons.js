@@ -26,6 +26,10 @@ export default class TrayIconsSubpage extends Adw.NavigationPage {
             'icon-hover-color',
             'icon-background-color',
             'icon-hover-background-color',
+            'icon-use-accent-color',
+            'icon-hover-use-accent-color',
+            'icon-background-use-accent-color',
+            'icon-hover-background-use-accent-color',
             'icon-border-radius',
             'enable-symbolic-icons',
         ];

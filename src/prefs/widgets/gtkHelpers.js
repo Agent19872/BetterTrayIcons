@@ -229,22 +229,43 @@ export function createTextureFromBytes(bytes) {
     }
 }
 
-export function createColorButton(settings, key, dialogTitle = '') {
+export function createColorButton(settings, key, dialogTitle = '', {accentKey = null} = {}) {
     const button = new Gtk.ColorDialogButton({
         valign: Gtk.Align.CENTER,
         dialog: new Gtk.ColorDialog({title: dialogTitle}),
     });
 
+    const styleManager = accentKey ? Adw.StyleManager.get_default() : null;
+    const usingAccent = () => accentKey && settings.get_boolean(accentKey);
+
+    let syncing = false;
     const sync = () => {
-        const rgba = new Gdk.RGBA();
-        if (!rgba.parse(settings.get_string(key)))
-            rgba.parse('rgba(0,0,0,1)');
-        button.set_rgba(rgba);
+        syncing = true;
+        // While the accent drives this color the swatch just previews the live
+        // accent, the stored value is left alone so it comes back on toggle-off.
+        if (usingAccent()) {
+            button.set_rgba(styleManager.get_accent_color_rgba());
+        } else {
+            const rgba = new Gdk.RGBA();
+            if (!rgba.parse(settings.get_string(key)))
+                rgba.parse('rgba(0,0,0,1)');
+            button.set_rgba(rgba);
+        }
+        syncing = false;
     };
     sync();
 
-    button.connect('notify::rgba', () => settings.set_string(key, button.get_rgba().to_string()));
+    // Skip our own set_rgba and the accent preview, only real picks persist.
+    button.connect('notify::rgba', () => {
+        if (syncing || usingAccent())
+            return;
+        settings.set_string(key, button.get_rgba().to_string());
+    });
     connectScoped(button, settings, `changed::${key}`, sync);
+    if (accentKey) {
+        connectScoped(button, settings, `changed::${accentKey}`, sync);
+        connectScoped(button, styleManager, 'notify::accent-color', sync);
+    }
 
     return button;
 }

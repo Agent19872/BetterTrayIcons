@@ -5,6 +5,7 @@ import {
     DEFAULT_PILL_RADIUS_PX,
     ICON_MARGIN_PX,
     BOX_SIDES,
+    ST_ACCENT_COLOR,
 } from '../../const.js';
 
 // GJS has no public predicate for disposed actors. The "(disposed)" marker
@@ -42,13 +43,13 @@ export function generateBoxStyle(settings, prefix, options = {}) {
         const schema = settings.settings_schema;
         const bgKey = `${colorPrefix}background-color`;
         if (schema.has_key(bgKey)) {
-            const bg = settings.get_string(bgKey);
+            const bg = accentAwareColor(settings, bgKey, `${colorPrefix}background-use-accent-color`);
             if (bg)
                 css += `background-color: ${bg};`;
         }
         const fgKey = `${colorPrefix}color`;
         if (schema.has_key(fgKey)) {
-            const col = settings.get_string(fgKey);
+            const col = accentAwareColor(settings, fgKey, `${colorPrefix}use-accent-color`);
             if (col)
                 css += `color: ${col};`;
         }
@@ -63,6 +64,16 @@ export function generateBoxStyle(settings, prefix, options = {}) {
 // Build {key: valueFn(key)} from a list of keys.
 function mapByKey(keys, valueFn) {
     return Object.fromEntries(keys.map(key => [key, valueFn(key)]));
+}
+
+// Returning the -st-accent-color keyword instead of a resolved value lets St
+// track the user's system accent for us, so nothing has to re-apply the style
+// when the accent changes.
+function accentAwareColor(settings, colorKey, accentKey) {
+    const schema = settings.settings_schema;
+    if (schema.has_key(accentKey) && settings.get_boolean(accentKey))
+        return ST_ACCENT_COLOR;
+    return settings.get_string(colorKey);
 }
 
 export function placeIndicatorInPanel(indicator, settings) {
@@ -127,19 +138,19 @@ export function computeTrayIconStyle(settings, {withColors = true} = {}) {
     let baseStyle;
     if (enableCustom) {
         const radius = settings.get_int('icon-border-radius');
-        const bg = settings.get_string('icon-background-color');
-        const color = withColors ? ` color: ${settings.get_string('icon-color')};` : '';
+        const bg = accentAwareColor(settings, 'icon-background-color', 'icon-background-use-accent-color');
+        const color = withColors ? ` color: ${accentAwareColor(settings, 'icon-color', 'icon-use-accent-color')};` : '';
         baseStyle = `padding: ${padV}px ${padH}px; border-radius: ${radius}px;${color} background-color: ${bg}; ${layoutFixes}`;
     } else {
         baseStyle = `padding: ${padV}px ${padH}px; border-radius: ${DEFAULT_PILL_RADIUS_PX}px; ${layoutFixes}`;
     }
 
     const hoverBg = enableCustom
-        ? settings.get_string('icon-hover-background-color')
+        ? accentAwareColor(settings, 'icon-hover-background-color', 'icon-hover-background-use-accent-color')
         : DEFAULT_HOVER_BG_COLOR;
     let hoverStyle = `${baseStyle} background-color: ${hoverBg};`;
     if (enableCustom && withColors) {
-        const hoverColor = settings.get_string('icon-hover-color');
+        const hoverColor = accentAwareColor(settings, 'icon-hover-color', 'icon-hover-use-accent-color');
         if (hoverColor)
             hoverStyle += ` color: ${hoverColor};`;
     }
@@ -155,27 +166,28 @@ export function computeToggleStyle(settings) {
     const inheritIcons = customToggle && settings.get_boolean('toggle-inherit-icon-style');
 
     if (inheritIcons) {
+        const inheritedColor = accentAwareColor(settings, 'icon-color', 'icon-use-accent-color') || '#ffffff';
         return {
             baseStyle: _buildInheritedToggleBase(settings),
             hoverStyle: _buildInheritedToggleHover(settings),
-            iconColor: settings.get_string('icon-color') || '#ffffff',
-            iconHoverColor: settings.get_string('icon-hover-color') ||
-                settings.get_string('icon-color') || '#ffffff',
+            iconColor: inheritedColor,
+            iconHoverColor: accentAwareColor(settings, 'icon-hover-color', 'icon-hover-use-accent-color') ||
+                inheritedColor,
         };
     }
 
     if (customToggle) {
         const layoutFixes = 'border: 0; box-shadow: none;';
-        const baseColor = settings.get_string('toggle-icon-color') || '#ffffff';
+        const baseColor = accentAwareColor(settings, 'toggle-icon-color', 'toggle-icon-use-accent-color') || '#ffffff';
         return {
             baseStyle: generateBoxStyle(settings, 'toggle-', {
                 radiusPrefix: 'toggle-icon-',
                 colorPrefix: 'toggle-icon-',
                 extraCss: layoutFixes,
             }),
-            hoverStyle: `background-color: ${settings.get_string('toggle-icon-hover-background-color')};`,
+            hoverStyle: `background-color: ${accentAwareColor(settings, 'toggle-icon-hover-background-color', 'toggle-icon-hover-background-use-accent-color')};`,
             iconColor: baseColor,
-            iconHoverColor: settings.get_string('toggle-icon-hover-color') || baseColor,
+            iconHoverColor: accentAwareColor(settings, 'toggle-icon-hover-color', 'toggle-icon-hover-use-accent-color') || baseColor,
         };
     }
 
@@ -188,15 +200,15 @@ function _buildInheritedToggleBase(settings) {
     const padV = settings.get_int('icon-padding-vertical');
     const padH = settings.get_int('icon-padding-horizontal');
     const radius = settings.get_int('icon-border-radius');
-    const color = settings.get_string('icon-color');
-    const bg = settings.get_string('icon-background-color');
+    const color = accentAwareColor(settings, 'icon-color', 'icon-use-accent-color');
+    const bg = accentAwareColor(settings, 'icon-background-color', 'icon-background-use-accent-color');
     return `padding: ${padV}px ${padH}px; border-radius: ${radius}px; color: ${color}; background-color: ${bg}; border: 0; box-shadow: none;`;
 }
 
 function _buildInheritedToggleHover(settings) {
     const enableCustomIcon = settings.get_boolean('enable-custom-icon-style');
     const bg = enableCustomIcon
-        ? settings.get_string('icon-hover-background-color')
+        ? accentAwareColor(settings, 'icon-hover-background-color', 'icon-hover-background-use-accent-color')
         : DEFAULT_HOVER_BG_COLOR;
     return `background-color: ${bg};`;
 }

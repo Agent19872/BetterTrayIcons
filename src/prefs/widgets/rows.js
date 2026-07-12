@@ -59,7 +59,14 @@ export function createSpinRow(title, settings, key, min = 0, max = 100, step = 1
 // Shape: { parent, title, description, items: [{ type:'color', title, key }] }.
 export function createColorRow(title, settings, key, options = {}) {
     const row = new Adw.ActionRow({title});
-    const colorButton = createColorButton(settings, key, title);
+    const colorButton = createColorButton(settings, key, title, {accentKey: options.accentKey});
+
+    // Grey the swatch out while the accent drives this color, it previews the
+    // accent but can't be picked until the toggle in the dialog goes back off.
+    if (options.accentKey) {
+        settings.bind(options.accentKey, colorButton, 'sensitive',
+            Gio.SettingsBindFlags.GET | Gio.SettingsBindFlags.INVERT_BOOLEAN);
+    }
 
     // Suffix order matters. Rows pack add_suffix() left-to-right, so the
     // variants paint-bucket goes first to land left of the color swatch.
@@ -261,18 +268,34 @@ export function createBoxSidesGroup(title, settings, keyPrefix, {min = 0, max = 
 }
 
 // Builds the Icon + Background color row pair used by tray icons and toggle button.
+// The paint-bucket dialog holds the accent toggles and the hover color, which
+// disappears once its accent toggle takes over.
 export function createIconColorPair(parent, settings, keyPrefix) {
     const specs = [
         {title: _('Icon'),       key: `${keyPrefix}color`,            hoverKey: `${keyPrefix}hover-color`,            variantTitle: _('Icon Color')},
         {title: _('Background'), key: `${keyPrefix}background-color`, hoverKey: `${keyPrefix}hover-background-color`, variantTitle: _('Background Color')},
     ];
-    return specs.map(s => createColorRow(s.title, settings, s.key, {
-        parent,
-        variants: {
-            title: s.variantTitle,
-            items: [{type: 'color', title: _('Hover'), key: s.hoverKey}],
-        },
-    }));
+    return specs.map(s => {
+        const accentKey = accentKeyFor(s.key);
+        const hoverAccentKey = accentKeyFor(s.hoverKey);
+        return createColorRow(s.title, settings, s.key, {
+            parent,
+            accentKey,
+            variants: {
+                title: s.variantTitle,
+                items: [
+                    {type: 'switch', title: _('Use Accent Color'), key: accentKey},
+                    {type: 'switch', title: _('Use Accent Color on Hover'), key: hoverAccentKey},
+                    {type: 'color', title: _('Hover'), key: s.hoverKey, hiddenByKey: hoverAccentKey},
+                ],
+            },
+        });
+    });
+}
+
+// Every `<x>-color` key pairs with a `<x>-use-accent-color` boolean.
+function accentKeyFor(colorKey) {
+    return colorKey.replace(/color$/, 'use-accent-color');
 }
 
 // The fixed width only exists where a gear column needs to stay flush,
