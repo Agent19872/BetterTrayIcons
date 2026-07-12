@@ -7,6 +7,7 @@ import {setAppConfigValue, deleteAppConfig, formatAppName} from '../../shared/ap
 import {resolveIcon} from '../../shared/icon.js';
 import {clearIds, removeTimer} from '../../shared/lifecycle.js';
 import {createButton, createIconButton, createImage, createAdjustment, applyResolvedIcon} from '../widgets/gtkHelpers.js';
+import {createActionRow} from '../widgets/rows.js';
 import IconPickerWidget from '../widgets/iconPicker.js';
 import {ENTRY_DEBOUNCE_MS} from '../../const.js';
 
@@ -127,11 +128,6 @@ export default class AppDialog extends Adw.PreferencesDialog {
         const dangerGroup = new Adw.PreferencesGroup({title: _('Danger Zone')});
         page.add(dangerGroup);
 
-        const deleteRow = new Adw.ActionRow({
-            title: _('Forget App'),
-            subtitle: _('Deletes all stored settings for this app.'),
-        });
-
         const deleteBtn = createButton({
             label: _('Forget'),
             cssClasses: ['destructive-action'],
@@ -143,22 +139,16 @@ export default class AppDialog extends Adw.PreferencesDialog {
             this.close();
         });
 
-        deleteRow.add_suffix(deleteBtn);
-        dangerGroup.add(deleteRow);
+        dangerGroup.add(createActionRow(_('Forget App'), _('Deletes all stored settings for this app.'), {
+            suffixWidgets: [deleteBtn],
+        }));
     }
 
     _buildCustomIconRow() {
         const iconResult = resolveIcon(this._data);
 
-        const iconRow = new Adw.ActionRow({
-            title: _('Custom Icon'),
-            subtitle: this._data.custom_icon ? this._data.custom_icon : _('Default app icon'),
-            activatable: true,
-        });
-
         const iconImage = createImage({pixel_size: 24});
         this._updateIconPreview(iconImage, iconResult);
-        iconRow.add_prefix(iconImage);
 
         const resetBtn = createIconButton('edit-undo-symbolic', {
             tooltip_text: _('Reset icon'),
@@ -173,8 +163,13 @@ export default class AppDialog extends Adw.PreferencesDialog {
             resetBtn.visible = false;
         });
 
-        iconRow.add_suffix(resetBtn);
-        iconRow.add_suffix(createImage({icon_name: 'go-next-symbolic'}));
+        const iconRow = createActionRow(_('Custom Icon'),
+            this._data.custom_icon ? this._data.custom_icon : _('Default app icon'), {
+                prefixWidget: iconImage,
+                suffixWidgets: [resetBtn],
+                suffixIcon: 'go-next-symbolic',
+                activatable: true,
+            });
 
         iconRow.connect('activated', () => {
             const currentIconForPicker = this._data.custom_icon || this._data.detected_icon || null;

@@ -5,6 +5,7 @@ import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions
 
 import {connectScoped} from '../../shared/lifecycle.js';
 import {pathOrThemedIcon} from '../../shared/icon.js';
+import {ACTION_DROPDOWN_WIDTH_PX} from '../../const.js';
 import {createColorButton, createIconButton, attachBadge} from './gtkHelpers.js';
 import {openStyleDialog, openUri} from '../dialogs/dialogs.js';
 
@@ -33,31 +34,11 @@ export function buildPrefsWidget(page, settings, keysToReset) {
 // `displayOptions` are the translated user-facing labels, `valueMap` the
 // GSettings strings, indexed in parallel.
 export function createComboRow(title, subtitle, settings, key, displayOptions, valueMap, options = {}) {
-    const row = new Adw.ComboRow({
-        title,
-        subtitle: subtitle || '',
-        model: new Gtk.StringList({strings: displayOptions}),
-    });
+    const dropdown = _createBoundDropdown(settings, key, displayOptions, valueMap, {label: title});
+    const row = createActionRow(title, subtitle, {suffixWidgets: [dropdown], activatable: true});
 
-    const currentValue = settings.get_string(key);
-    const index = valueMap.indexOf(currentValue);
-    if (index !== -1)
-        row.selected = index;
-
-    row.connect('notify::selected', () => {
-        const selectedIndex = row.selected;
-        if (selectedIndex >= 0 && selectedIndex < valueMap.length)
-            settings.set_string(key, valueMap[selectedIndex]);
-    });
-
-    // Keep UI in sync with external setting changes like the Reset button.
-    const updateRow = () => {
-        const val = settings.get_string(key);
-        const idx = valueMap.indexOf(val);
-        if (idx !== -1 && row.selected !== idx)
-            row.selected = idx;
-    };
-    connectScoped(row, settings, `changed::${key}`, updateRow);
+    // Row clicks open the list, the hit target Adw.ComboRow offered.
+    row.activatable_widget = dropdown;
 
     _applyExperimental(row, options, settings, key);
 
@@ -169,7 +150,7 @@ export function createIconPickerRow(title, settings, key, window, PickerClass, i
     return row;
 }
 
-export function createComplexActionRow(title, subtitle, settings, mainKey, displayOptions, values, window, AdvancedConfigClass, advancedConfigData) {
+export function createComplexActionRow(title, subtitle, settings, mainKey, displayOptions, values, window, AdvancedConfigClass, advancedConfigData, {flat = true} = {}) {
     const row = new Adw.ActionRow({
         title,
         subtitle: subtitle || '',
@@ -177,7 +158,7 @@ export function createComplexActionRow(title, subtitle, settings, mainKey, displ
     });
 
     const gearBtn = createIconButton('emblem-system-symbolic', {
-        flat: false,
+        flat,
         tooltip_text: _('Configure advanced actions'),
         callback: () => {
             const widget = new AdvancedConfigClass(window, settings, advancedConfigData);
@@ -185,30 +166,8 @@ export function createComplexActionRow(title, subtitle, settings, mainKey, displ
         },
     });
 
-    const dropdown = new Gtk.DropDown({
-        model: new Gtk.StringList({strings: displayOptions}),
-        valign: Gtk.Align.CENTER,
-        width_request: 240,
-    });
-
-    const currentVal = settings.get_string(mainKey);
-    const idx = values.indexOf(currentVal);
-    if (idx !== -1)
-        dropdown.selected = idx;
-
-    dropdown.connect('notify::selected', () => {
-        const newIdx = dropdown.selected;
-        if (newIdx >= 0 && newIdx < values.length)
-            settings.set_string(mainKey, values[newIdx]);
-    });
-
-    const updateDropdown = () => {
-        const val = settings.get_string(mainKey);
-        const newIdx = values.indexOf(val);
-        if (newIdx !== -1 && dropdown.selected !== newIdx)
-            dropdown.selected = newIdx;
-    };
-    connectScoped(row, settings, `changed::${mainKey}`, updateDropdown);
+    const dropdown = _createBoundDropdown(settings, mainKey, displayOptions, values,
+        {flat, width: ACTION_DROPDOWN_WIDTH_PX, label: title});
 
     row.add_suffix(gearBtn);
     row.add_suffix(dropdown);
@@ -227,7 +186,7 @@ export function bindVisibility(settings, key, widget, targetValue) {
 }
 
 export function createActionRow(title, subtitle, options = {}) {
-    const {prefixIcon, suffixIcon, headerSuffix, activatable, onActivate, experimental} = options;
+    const {prefixIcon, prefixWidget, suffixIcon, suffixWidgets, headerSuffix, activatable, onActivate, experimental} = options;
 
     const row = new Adw.ActionRow({
         title,
@@ -241,6 +200,9 @@ export function createActionRow(title, subtitle, options = {}) {
     if (prefixIcon)
         row.add_prefix(new Gtk.Image({icon_name: prefixIcon, pixel_size: 24, valign: Gtk.Align.CENTER}));
 
+    if (prefixWidget)
+        row.add_prefix(_centered(prefixWidget));
+
     if (experimental)
         attachBadge(row, _('Experimental'));
 
@@ -250,6 +212,9 @@ export function createActionRow(title, subtitle, options = {}) {
         row.add_suffix(headerSuffix);
     }
 
+    for (const widget of suffixWidgets ?? [])
+        row.add_suffix(_centered(widget));
+
     if (suffixIcon)
         row.add_suffix(new Gtk.Image({icon_name: suffixIcon, valign: Gtk.Align.CENTER}));
 
@@ -258,6 +223,27 @@ export function createActionRow(title, subtitle, options = {}) {
 
 export function createLinkRow(title, subtitle, iconName, window, url) {
     return createActionRow(title, subtitle, {prefixIcon: iconName, onActivate: () => openUri(window, url)});
+}
+
+export function createExpanderSection({title, subtitle, headerSuffix}) {
+    const expander = new Adw.ExpanderRow({
+        title,
+        subtitle: subtitle || '',
+    });
+
+    if (headerSuffix)
+        expander.add_suffix(_centered(headerSuffix));
+
+    let rows = [];
+    const setRows = next => {
+        for (const row of rows)
+            expander.remove(row);
+        rows = [...next];
+        for (const row of rows)
+            expander.add_row(row);
+    };
+
+    return {expander, setRows};
 }
 
 export function createBoxSidesGroup(title, settings, keyPrefix, {min = 0, max = 50, step = 1} = {}) {
@@ -275,7 +261,6 @@ export function createBoxSidesGroup(title, settings, keyPrefix, {min = 0, max = 
 }
 
 // Builds the Icon + Background color row pair used by tray icons and toggle button.
-// Each row has a paint-bucket variant button for the hover color.
 export function createIconColorPair(parent, settings, keyPrefix) {
     const specs = [
         {title: _('Icon'),       key: `${keyPrefix}color`,            hoverKey: `${keyPrefix}hover-color`,            variantTitle: _('Icon Color')},
@@ -288,6 +273,54 @@ export function createIconColorPair(parent, settings, keyPrefix) {
             items: [{type: 'color', title: _('Hover'), key: s.hoverKey}],
         },
     }));
+}
+
+// The fixed width only exists where a gear column needs to stay flush,
+// the label wires the row title to screen readers like Adw.ComboRow did.
+function _createBoundDropdown(settings, key, displayOptions, values, {flat = true, width = -1, label = null} = {}) {
+    const dropdown = new Gtk.DropDown({
+        model: new Gtk.StringList({strings: displayOptions}),
+        valign: Gtk.Align.CENTER,
+        width_request: width,
+    });
+
+    // The stylesheet has no flat variant for the dropdown node itself,
+    // only the internal toggle button picks up button.flat styling.
+    if (flat)
+        dropdown.get_first_child()?.add_css_class('flat');
+
+    if (label)
+        dropdown.update_property([Gtk.AccessibleProperty.LABEL], [label]);
+
+    _bindDropdownSelection(dropdown, settings, key, values);
+
+    return dropdown;
+}
+
+// The changed:: side keeps the UI in sync with external writes like
+// the Reset button.
+function _bindDropdownSelection(widget, settings, key, values) {
+    const index = values.indexOf(settings.get_string(key));
+    if (index !== -1)
+        widget.selected = index;
+
+    widget.connect('notify::selected', () => {
+        const selected = widget.selected;
+        if (selected >= 0 && selected < values.length)
+            settings.set_string(key, values[selected]);
+    });
+
+    connectScoped(widget, settings, `changed::${key}`, () => {
+        const idx = values.indexOf(settings.get_string(key));
+        if (idx !== -1 && widget.selected !== idx)
+            widget.selected = idx;
+    });
+}
+
+// Adw rows stretch prefix and suffix children to the full row height.
+function _centered(widget) {
+    widget.valign = Gtk.Align.CENTER;
+    return widget;
 }
 
 // `experimental: true` pins the badge on. `experimentalValues` shows it only

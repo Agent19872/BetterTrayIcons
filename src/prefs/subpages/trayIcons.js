@@ -1,9 +1,8 @@
 import Adw from 'gi://Adw';
 import GObject from 'gi://GObject';
-import Gio from 'gi://Gio';
 import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-import {createSpinRow, buildPrefsWidget, createIconColorPair} from '../widgets/rows.js';
+import {createSpinRow, createSwitchRow, buildPrefsWidget, createIconColorPair} from '../widgets/rows.js';
 
 export default class TrayIconsSubpage extends Adw.NavigationPage {
     static {
@@ -40,12 +39,8 @@ export default class TrayIconsSubpage extends Adw.NavigationPage {
         const groupStyle = new Adw.PreferencesGroup({title: _('Style')});
         page.add(groupStyle);
 
-        const symbolicRow = new Adw.SwitchRow({
-            title: _('Symbolic Icons'),
-            subtitle: _('Use monochrome icons when available.'),
-        });
-        this._settings.bind('enable-symbolic-icons', symbolicRow, 'active', Gio.SettingsBindFlags.DEFAULT);
-        groupStyle.add(symbolicRow);
+        groupStyle.add(createSwitchRow(_('Symbolic Icons'), _('Use monochrome icons when available.'),
+            this._settings, 'enable-symbolic-icons'));
 
         const groupSize = new Adw.PreferencesGroup({title: _('Size')});
         page.add(groupSize);

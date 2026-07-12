@@ -9,6 +9,7 @@ import {connectScoped, clearIds, removeTimer} from '../../shared/lifecycle.js';
 import {resolveIcon} from '../../shared/icon.js';
 import AppDialog from '../dialogs/appDialog.js';
 import {createButton, createIconButton, createImage, applyResolvedIcon, attachBadge} from '../widgets/gtkHelpers.js';
+import {createActionRow} from '../widgets/rows.js';
 import {WINE_ICON_NAMES, LEGACY_ID_PATTERNS, PAGE_REBUILD_DEBOUNCE_MS} from '../../const.js';
 
 export class ApplicationsPage extends Adw.PreferencesPage {
@@ -59,11 +60,9 @@ export class ApplicationsPage extends Adw.PreferencesPage {
         const apps = getAppConfigs(this._settings);
 
         if (apps.length === 0) {
-            this._appsGroup.add(new Adw.ActionRow({
-                title: _('No apps detected'),
-                subtitle: _('Run an app with a tray icon to see it here.'),
-                icon_name: 'system-search-symbolic',
-            }));
+            this._appsGroup.add(createActionRow(_('No apps detected'),
+                _('Run an app with a tray icon to see it here.'),
+                {prefixIcon: 'system-search-symbolic'}));
             return;
         }
 
@@ -113,20 +112,15 @@ export class ApplicationsPage extends Adw.PreferencesPage {
         const hasLegacy = apps.some(a => isLegacyAppId(a.id));
 
         if (hasLegacy) {
-            const cleanupRow = new Adw.ActionRow({
-                title: _('Clean Up Legacy IDs'),
-                subtitle: _('Remove leftovers from earlier versions.'),
-                activatable: true,
-            });
             const cleanupBtn = createButton({
                 label: _('Clean Up'),
                 cssClasses: ['suggested-action'],
                 valign: 'center',
             });
             cleanupBtn.connect('clicked', () => this._cleanupLegacyIds(apps));
-            cleanupRow.add_suffix(cleanupBtn);
-
-            this._appsGroup.add(cleanupRow);
+            this._appsGroup.add(createActionRow(_('Clean Up Legacy IDs'),
+                _('Remove leftovers from earlier versions.'),
+                {suffixWidgets: [cleanupBtn], activatable: true}));
         }
     }
 

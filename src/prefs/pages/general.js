@@ -134,24 +134,17 @@ export class GeneralPage extends Adw.PreferencesPage {
         });
         this.add(group);
 
-        const row = new Adw.ActionRow({
-            title: _('Backup and Restore'),
-            subtitle: _('Save settings as JSON or load them back.'),
-        });
-
         const importBtn = createIconButton('document-open-symbolic', {
             tooltip_text: _('Import'),
             callback: () => this._handleImport(),
         });
-        row.add_suffix(importBtn);
-
         const exportBtn = createIconButton('document-save-symbolic', {
             tooltip_text: _('Export'),
             callback: () => this._handleExport(),
         });
-        row.add_suffix(exportBtn);
-
-        group.add(row);
+        group.add(createActionRow(_('Backup and Restore'), _('Save settings as JSON or load them back.'), {
+            suffixWidgets: [importBtn, exportBtn],
+        }));
         group.add(createActionRow(_('Cloud Sync'), _('Keep settings in sync via a shared file.'), {
             headerSuffix: createIconButton('emblem-synchronizing-symbolic', {
                 flat: false,
@@ -164,11 +157,6 @@ export class GeneralPage extends Adw.PreferencesPage {
     _createDangerZoneGroup() {
         const group = new Adw.PreferencesGroup({title: _('Danger Zone')});
         this.add(group);
-
-        const row = new Adw.ActionRow({
-            title: _('Factory Reset'),
-            subtitle: _('Restore defaults and delete sync backups.'),
-        });
 
         const resetBtn = createButton({
             label: _('Reset'),
@@ -187,8 +175,9 @@ export class GeneralPage extends Adw.PreferencesPage {
             );
         });
 
-        row.add_suffix(resetBtn);
-        group.add(row);
+        group.add(createActionRow(_('Factory Reset'), _('Restore defaults and delete sync backups.'), {
+            suffixWidgets: [resetBtn],
+        }));
     }
 
     _handleExport() {

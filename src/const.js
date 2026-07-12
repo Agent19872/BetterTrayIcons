@@ -57,6 +57,8 @@ export const ICON_MARGIN_PX = 1;
 export const OVERFLOW_GRID_MIN_ROW_HEIGHT_PX = 24;
 // Pill-shape radius for non-custom tray icon buttons.
 export const DEFAULT_PILL_RADIUS_PX = 50;
+// Keeps the gear column on the actions page flush.
+export const ACTION_DROPDOWN_WIDTH_PX = 240;
 
 
 // ------- Drag-and-drop -------

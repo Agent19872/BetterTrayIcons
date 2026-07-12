@@ -8,7 +8,7 @@ import {readFileBytes} from '../../shared/fetch.js';
 import {saveSettingsToFile, loadSettingsFromFile, deleteBackup, listBackups} from '../../shared/settingsIO.js';
 import {connectScoped} from '../../shared/lifecycle.js';
 import {createButton, createIconButton, createImage} from '../widgets/gtkHelpers.js';
-import {createSwitchRow, createSpinRow} from '../widgets/rows.js';
+import {createSwitchRow, createSpinRow, createActionRow, createExpanderSection} from '../widgets/rows.js';
 import {showConfirmationDialog} from './dialogs.js';
 import {ENTRY_DEBOUNCE_MS} from '../../const.js';
 
@@ -122,10 +122,7 @@ function _buildSyncLocationGroup(page, settings, openJsonFileChooser, cancellabl
     pathRow.add_suffix(fileBtn);
     group.add(pathRow);
 
-    const statusRow = new Adw.ActionRow({
-        title: _('Last Sync'),
-        subtitle: _('No file selected'),
-    });
+    const statusRow = createActionRow(_('Last Sync'), _('No file selected'));
     group.add(statusRow);
 
     const refreshStatus = () => {
@@ -266,11 +263,9 @@ function _buildActionsGroup(page, pathRow, settings, dialog, toast, onAfterActio
 }
 
 function _buildActionRow(group, {title, btnLabel, onClick}) {
-    const row = new Adw.ActionRow({title});
     const btn = createButton({label: btnLabel, valign: 'center'});
     btn.connect('clicked', onClick);
-    row.add_suffix(btn);
-    group.add(row);
+    group.add(createActionRow(title, null, {suffixWidgets: [btn]}));
     return btn;
 }
 
@@ -310,21 +305,14 @@ function _buildBackupHistoryGroup(page, pathRow, dialog, toast, settings, onAfte
     const group = new Adw.PreferencesGroup();
     page.add(group);
 
-    const expander = new Adw.ExpanderRow({
+    const {expander, setRows} = createExpanderSection({
         title: _('Backups'),
         subtitle: _('None available'),
-        sensitive: false,
     });
+    expander.sensitive = false;
     group.add(expander);
 
-    let childRows = [];
     let refreshGen = 0;
-
-    const clearRows = () => {
-        for (const r of childRows)
-            expander.remove(r);
-        childRows = [];
-    };
 
     const showEmpty = () => {
         expander.sensitive = false;
@@ -337,7 +325,7 @@ function _buildBackupHistoryGroup(page, pathRow, dialog, toast, settings, onAfte
         const gen = ++refreshGen;
 
         if (!base) {
-            clearRows();
+            setRows([]);
             showEmpty();
             return;
         }
@@ -347,16 +335,11 @@ function _buildBackupHistoryGroup(page, pathRow, dialog, toast, settings, onAfte
             if (gen !== refreshGen || cancellable.is_cancelled())
                 return;
 
-            clearRows();
             const compressed = backups.filter(b => b.compressed);
-            for (const b of compressed) {
-                const childRow = _buildBackupRow({
-                    path: b.path, index: b.index, mtime: b.mtime,
-                    pathRow, dialog, toast, settings, onAfterAction,
-                });
-                expander.add_row(childRow);
-                childRows.push(childRow);
-            }
+            setRows(compressed.map(b => _buildBackupRow({
+                path: b.path, index: b.index, mtime: b.mtime,
+                pathRow, dialog, toast, settings, onAfterAction,
+            })));
 
             if (compressed.length > 0) {
                 expander.sensitive = true;
@@ -374,7 +357,6 @@ function _buildBackupRow({path, index, mtime, pathRow, dialog, toast, settings, 
     const label = mtime
         ? `${_('Backup')} ${index} · ${mtime.format('%Y-%m-%d %H:%M')}`
         : `${_('Backup')} ${index}`;
-    const row = new Adw.ActionRow({title: label});
 
     const deleteBtn = createIconButton('user-trash-symbolic', {
         extraClasses: ['destructive-action'],
@@ -404,8 +386,5 @@ function _buildBackupRow({path, index, mtime, pathRow, dialog, toast, settings, 
         },
     });
 
-    row.add_suffix(deleteBtn);
-    row.add_suffix(restoreBtn);
-
-    return row;
+    return createActionRow(label, null, {suffixWidgets: [deleteBtn, restoreBtn]});
 }
