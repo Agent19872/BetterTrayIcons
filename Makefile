@@ -31,6 +31,7 @@ $(ZIP):
 		$$(for f in schemas/*.gschema.xml; do echo "--schema=$$f"; done) \
 		--extra-source=src \
 		--extra-source=interfaces \
+		--extra-source=assets \
 		--force
 
 # Install the extension locally for the current user

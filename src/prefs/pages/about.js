@@ -36,7 +36,7 @@ export class AboutPage extends Adw.PreferencesPage {
     }
 
     _buildUI() {
-        const mediaDir = this._extensionDir.get_child('media');
+        const assetsDir = this._extensionDir.get_child('assets');
         const translateBanner = new Adw.Banner({
             title: _('Help translate this extension.'),
             button_label: _('Translate'),
@@ -151,8 +151,8 @@ export class AboutPage extends Adw.PreferencesPage {
         // page, so defer it until the page is actually shown.
         const mapId = this.connect('map', () => {
             this.disconnect(mapId);
-            this._themeSignals.push(bindSvgIconToTheme(githubIcon, mediaDir, 'github-icon.svg', 18));
-            this._themeSignals.push(bindLogoToTheme(logo, fallbackLabel, mediaDir, 'logo.svg'));
+            this._themeSignals.push(bindSvgIconToTheme(githubIcon, assetsDir, 'github-icon.svg', 18));
+            this._themeSignals.push(bindLogoToTheme(logo, fallbackLabel, assetsDir, 'logo.svg'));
         });
     }
 

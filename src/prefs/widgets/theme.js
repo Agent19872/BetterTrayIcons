@@ -5,7 +5,7 @@ import GdkPixbuf from 'gi://GdkPixbuf';
 import {warn} from '../../shared/logging.js';
 
 // Without a `lightFile` the dark SVG's white strokes are inverted to black.
-export function bindLogoToTheme(logo, fallback, mediaDir, darkFile, lightFile = null) {
+export function bindLogoToTheme(logo, fallback, assetsDir, darkFile, lightFile = null) {
     const cache = {dark: null, light: null};
 
     return _bindToStyleManager(() => {
@@ -13,11 +13,11 @@ export function bindLogoToTheme(logo, fallback, mediaDir, darkFile, lightFile = 
 
         let svgStr = null;
         if (!isDark && lightFile) {
-            cache.light ??= _readSvgString(mediaDir, lightFile);
+            cache.light ??= _readSvgString(assetsDir, lightFile);
             svgStr = cache.light;
         }
         if (!svgStr) {
-            cache.dark ??= _readSvgString(mediaDir, darkFile);
+            cache.dark ??= _readSvgString(assetsDir, darkFile);
             svgStr = cache.dark;
             if (svgStr && !isDark)
                 svgStr = _recolorWhiteToBlack(svgStr, {strict: true});
@@ -38,15 +38,15 @@ export function bindLogoToTheme(logo, fallback, mediaDir, darkFile, lightFile = 
 
 // Like bindLogoToTheme but for non-logo icons that need pixel-exact sizing.
 // One read plus one render per mode, theme flips just swap textures.
-export function bindSvgIconToTheme(image, mediaDir, filename, size = 0) {
+export function bindSvgIconToTheme(image, assetsDir, filename, size = 0) {
     let rawSvg;
     const textures = {dark: null, light: null};
 
     return _bindToStyleManager(() => {
         if (rawSvg === undefined) {
-            rawSvg = _readSvgString(mediaDir, filename);
+            rawSvg = _readSvgString(assetsDir, filename);
             if (!rawSvg)
-                warn(`Icon file not found: ${mediaDir.get_child(filename).get_path()}`);
+                warn(`Icon file not found: ${assetsDir.get_child(filename).get_path()}`);
         }
         if (!rawSvg)
             return;
@@ -76,8 +76,8 @@ function _bindToStyleManager(update) {
     return id;
 }
 
-function _readSvgString(mediaDir, filename) {
-    const file = mediaDir.get_child(filename);
+function _readSvgString(assetsDir, filename) {
+    const file = assetsDir.get_child(filename);
     if (!file.query_exists(null))
         return null;
     const [success, contents] = file.load_contents(null);

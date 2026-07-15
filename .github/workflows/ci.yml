@@ -71,6 +71,7 @@ jobs:
             $(for f in schemas/*.gschema.xml; do echo "--schema=$f"; done) \
             --extra-source=src \
             --extra-source=interfaces \
+            --extra-source=assets \
             --force
 
       - name: Run shexli

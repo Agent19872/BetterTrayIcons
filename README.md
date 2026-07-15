@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="media/logo.svg" alt="Better Tray Icons" width="264">
+  <img src="assets/logo.svg" alt="Better Tray Icons" width="264">
 </p>
 
 <h1 align="center">
