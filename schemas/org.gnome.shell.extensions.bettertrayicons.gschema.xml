@@ -43,11 +43,16 @@
         </key>
 
         <key name="tooltip-delay" type="i">
+            <range min="0"/>
             <default>500</default>
             <summary>Delay in milliseconds before a tooltip is shown</summary>
         </key>
 
         <key name="tooltip-position" type="s">
+            <choices>
+                <choice value="top"/>
+                <choice value="bottom"/>
+            </choices>
             <default>'top'</default>
             <summary>Tooltip placement relative to the icon (top or bottom)</summary>
         </key>
@@ -115,27 +120,32 @@
         </key>
 
         <key name="icon-border-radius" type="i">
+            <range min="0"/>
             <default>50</default>
             <summary>Corner radius for tray icons in pixels</summary>
         </key>
 
         <key name="icon-size" type="i">
+            <range min="1"/>
             <default>20</default>
             <summary>Tray icon size in pixels</summary>
         </key>
 
         <key name="icon-padding-horizontal" type="i">
+            <range min="0"/>
             <default>5</default>
             <summary>Horizontal padding around each tray icon in pixels</summary>
         </key>
 
         <key name="icon-padding-vertical" type="i">
+            <range min="0"/>
             <default>5</default>
             <summary>Vertical padding around each tray icon in pixels</summary>
         </key>
 
         <!-- Limits & Layout -->
         <key name="visible-icon-limit" type="i">
+            <range min="0"/>
             <default>2</default>
             <summary>Number of tray icons shown inline before overflow kicks in</summary>
         </key>
@@ -146,6 +156,7 @@
         </key>
 
         <key name="grid-column-limit" type="i">
+            <range min="1"/>
             <default>4</default>
             <summary>Maximum columns in the grid overflow layout</summary>
         </key>
@@ -156,6 +167,7 @@
         </key>
 
         <key name="tray-order" type="i">
+            <range min="0"/>
             <default>0</default>
             <summary>Position index within the chosen panel box</summary>
         </key>
@@ -172,6 +184,7 @@
         </key>
 
         <key name="toggle-icon-size" type="i">
+            <range min="1"/>
             <default>20</default>
             <summary>Toggle button icon size in pixels</summary>
         </key>
@@ -217,46 +230,55 @@
         </key>
 
         <key name="toggle-icon-border-radius" type="i">
+            <range min="0"/>
             <default>50</default>
             <summary>Toggle button corner radius in pixels</summary>
         </key>
 
         <key name="toggle-padding-top" type="i">
+            <range min="0"/>
             <default>0</default>
             <summary>Top padding inside the toggle button in pixels</summary>
         </key>
 
         <key name="toggle-padding-bottom" type="i">
+            <range min="0"/>
             <default>0</default>
             <summary>Bottom padding inside the toggle button in pixels</summary>
         </key>
 
         <key name="toggle-padding-left" type="i">
+            <range min="0"/>
             <default>0</default>
             <summary>Left padding inside the toggle button in pixels</summary>
         </key>
 
         <key name="toggle-padding-right" type="i">
+            <range min="0"/>
             <default>0</default>
             <summary>Right padding inside the toggle button in pixels</summary>
         </key>
 
         <key name="toggle-margin-top" type="i">
+            <range min="0"/>
             <default>0</default>
             <summary>Top margin around the toggle button in pixels</summary>
         </key>
 
         <key name="toggle-margin-bottom" type="i">
+            <range min="0"/>
             <default>0</default>
             <summary>Bottom margin around the toggle button in pixels</summary>
         </key>
 
         <key name="toggle-margin-left" type="i">
+            <range min="0"/>
             <default>0</default>
             <summary>Left margin around the toggle button in pixels</summary>
         </key>
 
         <key name="toggle-margin-right" type="i">
+            <range min="0"/>
             <default>0</default>
             <summary>Right margin around the toggle button in pixels</summary>
         </key>
@@ -273,46 +295,55 @@
         </key>
 
         <key name="overflow-container-border-radius" type="i">
+            <range min="0"/>
             <default>25</default>
             <summary>Overflow popup corner radius in pixels</summary>
         </key>
 
         <key name="overflow-container-padding-top" type="i">
+            <range min="0"/>
             <default>5</default>
             <summary>Top padding inside the overflow popup in pixels</summary>
         </key>
 
         <key name="overflow-container-padding-bottom" type="i">
+            <range min="0"/>
             <default>5</default>
             <summary>Bottom padding inside the overflow popup in pixels</summary>
         </key>
 
         <key name="overflow-container-padding-left" type="i">
+            <range min="0"/>
             <default>5</default>
             <summary>Left padding inside the overflow popup in pixels</summary>
         </key>
 
         <key name="overflow-container-padding-right" type="i">
+            <range min="0"/>
             <default>5</default>
             <summary>Right padding inside the overflow popup in pixels</summary>
         </key>
 
         <key name="overflow-container-margin-top" type="i">
+            <range min="0"/>
             <default>0</default>
             <summary>Top margin around the overflow popup in pixels</summary>
         </key>
 
         <key name="overflow-container-margin-bottom" type="i">
+            <range min="0"/>
             <default>0</default>
             <summary>Bottom margin around the overflow popup in pixels</summary>
         </key>
 
         <key name="overflow-container-margin-left" type="i">
+            <range min="0"/>
             <default>0</default>
             <summary>Left margin around the overflow popup in pixels</summary>
         </key>
 
         <key name="overflow-container-margin-right" type="i">
+            <range min="0"/>
             <default>0</default>
             <summary>Right margin around the overflow popup in pixels</summary>
         </key>
