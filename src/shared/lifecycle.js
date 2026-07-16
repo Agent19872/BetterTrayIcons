@@ -44,14 +44,17 @@ export function disconnectAll(target, source, prop, method = 'disconnect') {
     target[prop] = [];
 }
 
-// connect + auto-disconnect when target fires `event`. Used in prefs to
-// tie a settings handler to a widget so it can't outlive the page.
-export function connectScoped(target, source, signal, callback, event = 'destroy') {
-    const id = source.connect(signal, callback);
-    target.connect(event, () => {
-        try {
-            source.disconnect(id);
-        } catch { /* source disposed */ }
-    });
+// GTK4 fires no `destroy` on a mere unparent, so a plain connect on a
+// long-lived source would keep the widget alive for the whole process.
+// A dialog emits only `closed`, hence the event.
+export function connectScoped(target, source, signal, callback, event = null) {
+    const id = source.connect_object(signal, callback, target, 0);
+    if (event) {
+        target.connect(event, () => {
+            try {
+                source.disconnect(id);
+            } catch { /* already gone with the target */ }
+        });
+    }
     return id;
 }
