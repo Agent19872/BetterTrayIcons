@@ -3,10 +3,39 @@ import GLib from 'gi://GLib';
 
 import {warn, error} from './logging.js';
 import {safeMapFromParsed} from './appConfig.js';
-import {readFileBytes} from './fetch.js';
+import {readFileBytes, readFileText, probePaths} from './fetch.js';
 import {COLOR_PATTERN} from '../const.js';
 
-export function importSettingsFromJSON(settings, data) {
+// Await this before importSettingsFromJSON, which has to stay synchronous so
+// the shell's _importing flag spans exactly its own writes.
+export function probeImportIconPaths(data, cancellable = null) {
+    const homeDir = GLib.get_home_dir();
+    const paths = new Set();
+
+    const collect = icon => {
+        if (typeof icon !== 'string')
+            return;
+        const resolved = _expandHome(icon, homeDir);
+        if (resolved.startsWith('/'))
+            paths.add(resolved);
+    };
+
+    const configs = data?.['app-configs'];
+    if (configs && typeof configs === 'object') {
+        for (const conf of Object.values(configs)) {
+            if (!conf || typeof conf !== 'object')
+                continue;
+            const states = conf.state_icons;
+            if (states && typeof states === 'object' && !Array.isArray(states))
+                Object.values(states).forEach(collect);
+            collect(conf.custom_icon);
+        }
+    }
+
+    return probePaths(paths, cancellable);
+}
+
+export function importSettingsFromJSON(settings, data, iconPaths = new Map()) {
     if (!data || typeof data !== 'object')
         return;
 
@@ -29,13 +58,13 @@ export function importSettingsFromJSON(settings, data) {
             return;
         }
 
-        if (typeof val === 'string' && val.includes('$HOME'))
-            val = val.split('$HOME').join(homeDir);
+        if (typeof val === 'string')
+            val = _expandHome(val, homeDir);
 
         // app-configs is stored as a JSON string in GSettings, so re-encode it.
         if (key === 'app-configs' && typeof val === 'object') {
             val = JSON.stringify(safeMapFromParsed(val, (appId, conf) =>
-                _sanitizeAppConfigForImport(appId, conf, homeDir)
+                _sanitizeAppConfigForImport(appId, conf, homeDir, iconPaths)
             ));
         }
 
@@ -58,23 +87,13 @@ export async function saveSettingsToFile(settings, path) {
     // The sync file often lives on a network mount, so every write here
     // is async to keep the calling main loop responsive.
     const file = Gio.File.new_for_path(path);
-    await new Promise((resolve, reject) => {
-        file.replace_contents_async(
-            GLib.Bytes.new(new TextEncoder().encode(jsonString)),
-            null,
-            false,
-            Gio.FileCreateFlags.REPLACE_DESTINATION,
-            null,
-            (obj, res) => {
-                try {
-                    obj.replace_contents_finish(res);
-                    resolve();
-                } catch (e) {
-                    reject(e);
-                }
-            }
-        );
-    });
+    await file.replace_contents_async(
+        GLib.Bytes.new(new TextEncoder().encode(jsonString)),
+        null,
+        false,
+        Gio.FileCreateFlags.REPLACE_DESTINATION,
+        null
+    );
 }
 
 export async function loadSettingsFromFile(settings, path) {
@@ -82,46 +101,28 @@ export async function loadSettingsFromFile(settings, path) {
     let jsonString;
 
     if (path.endsWith('.gz')) {
-        const fileStream = await new Promise((resolve, reject) => {
-            file.read_async(GLib.PRIORITY_DEFAULT, null, (obj, res) => {
-                try {
-                    resolve(obj.read_finish(res));
-                } catch (e) {
-                    reject(e);
-                }
-            });
-        });
+        const fileStream = await file.read_async(GLib.PRIORITY_DEFAULT, null);
         const decompressor = Gio.ZlibDecompressor.new(Gio.ZlibCompressorFormat.GZIP);
         const converterStream = Gio.ConverterInputStream.new(fileStream, decompressor);
         const outStream = Gio.MemoryOutputStream.new_resizable();
-        await new Promise((resolve, reject) => {
-            outStream.splice_async(
-                converterStream,
-                Gio.OutputStreamSpliceFlags.CLOSE_SOURCE | Gio.OutputStreamSpliceFlags.CLOSE_TARGET,
-                GLib.PRIORITY_DEFAULT,
-                null,
-                (obj, res) => {
-                    try {
-                        obj.splice_finish(res);
-                        resolve();
-                    } catch (e) {
-                        reject(e);
-                    }
-                }
-            );
-        });
+        await outStream.splice_async(
+            converterStream,
+            Gio.OutputStreamSpliceFlags.CLOSE_SOURCE | Gio.OutputStreamSpliceFlags.CLOSE_TARGET,
+            GLib.PRIORITY_DEFAULT,
+            null
+        );
         jsonString = new TextDecoder().decode(outStream.steal_as_bytes().get_data());
     } else {
-        const contents = await readFileBytes(file);
-        jsonString = new TextDecoder().decode(contents);
+        jsonString = await readFileText(file);
     }
 
-    importSettingsFromJSON(settings, JSON.parse(jsonString));
+    const data = JSON.parse(jsonString);
+    importSettingsFromJSON(settings, data, await probeImportIconPaths(data));
 }
 
-// Backups live next to the sync file as `<path>.<n>.gz`, plain `.<n>`
-// from old versions. One directory enumeration replaces stat-probing
-// every candidate slot, which hurts on network mounts.
+// Old versions wrote the backups uncompressed, hence the optional `.gz`.
+// One directory enumeration instead of stat-probing every candidate slot,
+// which hurts on network mounts.
 export async function listBackups(path) {
     const file = Gio.File.new_for_path(path);
     const parent = file.get_parent();
@@ -131,21 +132,12 @@ export async function listBackups(path) {
     const base = file.get_basename();
     const backups = [];
     try {
-        const enumerator = await new Promise((resolve, reject) => {
-            parent.enumerate_children_async(
-                'standard::name,time::modified',
-                Gio.FileQueryInfoFlags.NONE,
-                GLib.PRIORITY_DEFAULT,
-                null,
-                (obj, res) => {
-                    try {
-                        resolve(obj.enumerate_children_finish(res));
-                    } catch (e) {
-                        reject(e);
-                    }
-                }
-            );
-        });
+        const enumerator = await parent.enumerate_children_async(
+            'standard::name,time::modified',
+            Gio.FileQueryInfoFlags.NONE,
+            GLib.PRIORITY_DEFAULT,
+            null
+        );
 
         for await (const info of enumerator) {
             const name = info.get_name();
@@ -162,7 +154,6 @@ export async function listBackups(path) {
             });
         }
     } catch {
-        // Directory unreadable or gone, nothing to list.
         return [];
     }
 
@@ -206,6 +197,10 @@ function _exportSettingsToJSON(settings) {
                     const conf = nativeVal[appId];
                     if (conf.custom_icon && typeof conf.custom_icon === 'string' && conf.custom_icon.startsWith(homeDir))
                         conf.custom_icon = conf.custom_icon.replace(homeDir, '$HOME');
+                    for (const [state, icon] of Object.entries(conf.state_icons ?? {})) {
+                        if (typeof icon === 'string' && icon.startsWith(homeDir))
+                            conf.state_icons[state] = icon.replace(homeDir, '$HOME');
+                    }
                 });
             } catch { /* keep raw string */ }
         }
@@ -250,39 +245,13 @@ async function _rotateFile(path, maxBackups) {
 
 async function _writeCompressed(path, content) {
     const file = Gio.File.new_for_path(path);
-    const fileStream = await new Promise((resolve, reject) => {
-        file.replace_async(null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, GLib.PRIORITY_DEFAULT, null, (obj, res) => {
-            try {
-                resolve(obj.replace_finish(res));
-            } catch (e) {
-                reject(e);
-            }
-        });
-    });
+    const fileStream = await file.replace_async(null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, GLib.PRIORITY_DEFAULT, null);
 
     const compressor = Gio.ZlibCompressor.new(Gio.ZlibCompressorFormat.GZIP, -1);
     const converterStream = Gio.ConverterOutputStream.new(fileStream, compressor);
 
-    await new Promise((resolve, reject) => {
-        converterStream.write_all_async(content, GLib.PRIORITY_DEFAULT, null, (obj, res) => {
-            try {
-                obj.write_all_finish(res);
-                resolve();
-            } catch (e) {
-                reject(e);
-            }
-        });
-    });
-    await new Promise((resolve, reject) => {
-        converterStream.close_async(GLib.PRIORITY_DEFAULT, null, (obj, res) => {
-            try {
-                obj.close_finish(res);
-                resolve();
-            } catch (e) {
-                reject(e);
-            }
-        });
-    });
+    await converterStream.write_all_async(content, GLib.PRIORITY_DEFAULT, null);
+    await converterStream.close_async(GLib.PRIORITY_DEFAULT, null);
 }
 
 function _moveAsync(sourcePath, destPath) {
@@ -306,26 +275,49 @@ function _isMalformedColor(key, val) {
 
 // Null drops the whole entry, so an icon path that doesn't exist on
 // this machine never survives a cross-device import.
-function _sanitizeAppConfigForImport(appId, appConf, homeDir) {
+
+function _expandHome(value, homeDir) {
+    return value.includes('$HOME') ? value.split('$HOME').join(homeDir) : value;
+}
+
+// An unprobed path is left alone rather than dropped.
+function _isMissingIcon(path, iconPaths) {
+    return path.startsWith('/') && iconPaths.get(path) === false;
+}
+
+function _sanitizeAppConfigForImport(appId, appConf, homeDir, iconPaths) {
+    if (!appConf || typeof appConf !== 'object' || Array.isArray(appConf))
+        return null;
+
+    // A string here would have Object.entries walk its characters and the
+    // loop below assign to a read-only index.
+    if (appConf.state_icons && (typeof appConf.state_icons !== 'object' || Array.isArray(appConf.state_icons)))
+        delete appConf.state_icons;
+
+    for (const [state, icon] of Object.entries(appConf.state_icons ?? {})) {
+        if (typeof icon !== 'string')
+            continue;
+        const resolved = _expandHome(icon, homeDir);
+        appConf.state_icons[state] = resolved;
+        if (_isMissingIcon(resolved, iconPaths)) {
+            warn(`Import: Dropping state ${state} of ${appId}, icon not found: ${resolved}`);
+            delete appConf.state_icons[state];
+        }
+    }
+
     if (!appConf.custom_icon || typeof appConf.custom_icon !== 'string')
         return appConf;
 
-    if (appConf.custom_icon.includes('$HOME'))
-        appConf.custom_icon = appConf.custom_icon.split('$HOME').join(homeDir);
+    appConf.custom_icon = _expandHome(appConf.custom_icon, homeDir);
 
-    if (appConf.custom_icon.startsWith('/')) {
-        const f = Gio.File.new_for_path(appConf.custom_icon);
-        if (!f.query_exists(null)) {
-            warn(`Import: Skipping ${appId}, custom icon not found: ${appConf.custom_icon}`);
-            return null;
-        }
+    if (_isMissingIcon(appConf.custom_icon, iconPaths)) {
+        warn(`Import: Skipping ${appId}, custom icon not found: ${appConf.custom_icon}`);
+        return null;
     }
 
     return appConf;
 }
 
-// No exists pre-check: deleting a missing file just errors out, and the
-// error is swallowed either way.
 function _deleteAsync(path) {
     return new Promise(resolve => {
         Gio.File.new_for_path(path).delete_async(GLib.PRIORITY_DEFAULT, null, (obj, res) => {

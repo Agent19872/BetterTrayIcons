@@ -4,14 +4,14 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {error, warn} from './src/shared/logging.js';
 import {readFileBytes} from './src/shared/fetch.js';
-import {importSettingsFromJSON, saveSettingsToFile} from './src/shared/settingsIO.js';
+import {importSettingsFromJSON, probeImportIconPaths, saveSettingsToFile} from './src/shared/settingsIO.js';
 import {clearIds, disconnectSignal, disconnectAll, disposeAll, removeTimer} from './src/shared/lifecycle.js';
 import {placeIndicatorInPanel} from './src/shell/utils/actor.js';
 
 import {PanelIndicator} from './src/shell/panelIndicator.js';
 import {SniWatcher} from './src/shell/sniWatcher.js';
 import {XEmbedTrayBridge} from './src/shell/xembedBridge.js';
-import {AUTO_SYNC_DEBOUNCE_MS, AUTO_PUSH_DEBOUNCE_MS, AUTO_PUSH_GUARD_AFTER_IMPORT_MS} from './src/const.js';
+import {AUTO_SYNC_DEBOUNCE_MS, AUTO_PUSH_DEBOUNCE_MS} from './src/const.js';
 
 export default class BetterTrayIconsExtension extends Extension {
     enable() {
@@ -93,7 +93,7 @@ export default class BetterTrayIconsExtension extends Extension {
             disposeAll(this, 'cancel', '_syncCancellable');
             this._syncCancellable = new Gio.Cancellable();
 
-            readFileBytes(file, this._syncCancellable).then(contents => {
+            readFileBytes(file, this._syncCancellable).then(async contents => {
                 if (!this._settings)
                     return;
                 const data = JSON.parse(new TextDecoder().decode(contents));
@@ -102,8 +102,19 @@ export default class BetterTrayIconsExtension extends Extension {
                 if (data._meta && data._meta.source === GLib.get_host_name())
                     return;
 
-                this._lastImportAt = Date.now();
-                importSettingsFromJSON(this._settings, data);
+                // Probe the paths before the flag goes up, off the main loop.
+                const iconPaths = await probeImportIconPaths(data, this._syncCancellable);
+                if (!this._settings)
+                    return;
+
+                // The in-process change echo arrives synchronously inside
+                // apply(), so the flag spans exactly the import's own writes.
+                this._importing = true;
+                try {
+                    importSettingsFromJSON(this._settings, data, iconPaths);
+                } finally {
+                    this._importing = false;
+                }
             }).catch(e => {
                 if (!e?.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
                     warn(`Auto-sync import failed: ${e.message}`);
@@ -124,7 +135,7 @@ export default class BetterTrayIconsExtension extends Extension {
         this._autoPushSignalId = this._settings.connect('changed', (_s, key) => {
             if (key === 'sync-file-path' || key === 'enable-auto-sync')
                 return;
-            if (this._lastImportAt && Date.now() - this._lastImportAt < AUTO_PUSH_GUARD_AFTER_IMPORT_MS)
+            if (this._importing)
                 return;
 
             clearIds(this, removeTimer, '_autoPushDebounceId');
