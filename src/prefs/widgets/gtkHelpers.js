@@ -7,7 +7,7 @@ import GdkPixbuf from 'gi://GdkPixbuf';
 import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 import {error} from '../../shared/logging.js';
-import {buildSymbolicCandidates, orderThemedNames, themedIcon, pathOrThemedIcon, probeIconPaths} from '../../shared/icon.js';
+import {buildSymbolicCandidates, orderThemedNames, themedIcon, pathOrThemedIcon, probeIconPaths, recolorSymbolicFile, isSymbolicName, symbolicTint} from '../../shared/icon.js';
 import {fileExists} from '../../shared/fetch.js';
 import {connectScoped, ruleDispatcher} from '../../shared/lifecycle.js';
 import {BOX_SIDES, PREVIEW_STOCK_POPUP_CSS} from '../../const.js';
@@ -410,7 +410,7 @@ export function hasThemeIcon(name) {
     return _iconTheme.has_icon(name);
 }
 
-export function applyPathIcon(image, value) {
+export function applyPathIcon(image, value, settings = null) {
     if (!image)
         return;
     if (!value) {
@@ -427,10 +427,26 @@ export function applyPathIcon(image, value) {
 
     // Probing is async, so a fast typist can outrun it. Only the value the
     // image is showing now gets to paint.
-    fileExists(value).then(exists => {
-        if (image._btiPendingIcon === value)
-            image.set_from_gicon(pathOrThemedIcon(value, exists));
+    Promise.all([fileExists(value), _recoloredFor(value, settings)]).then(([exists, recolored]) => {
+        if (image._btiPendingIcon !== value)
+            return;
+        image.set_from_gicon(recolored ?? pathOrThemedIcon(value, exists));
     });
+}
+
+// Adw resolves the accent on the prefs side, St does it from a theme node.
+export function prefsSymbolicTint(settings) {
+    return symbolicTint(settings,
+        Adw.StyleManager.get_default().get_accent_color_rgba().to_string());
+}
+
+// A -symbolic file gets its neutral parts recolored to the icon tint, else
+// null so the caller keeps its plain FileIcon. Skipped without settings, since
+// the tint comes from there.
+function _recoloredFor(value, settings) {
+    if (!settings || !isSymbolicName(value))
+        return Promise.resolve(null);
+    return recolorSymbolicFile(value, prefsSymbolicTint(settings));
 }
 
 // GTK renders a FileIcon whose file is gone as something other than
@@ -442,11 +458,18 @@ export function applyIconPreview(imageWidget, iconResult, settings) {
         applyResolvedIcon(imageWidget, iconResult, useSymbolic);
         return;
     }
-    probeIconPaths([{custom_icon: iconResult.value}]).then(paths =>
-        applyResolvedIcon(imageWidget, iconResult, useSymbolic, paths));
+    const path = iconResult.value;
+    imageWidget._btiPendingIcon = path;
+    Promise.all([
+        probeIconPaths([{custom_icon: path}]),
+        _recoloredFor(path, settings),
+    ]).then(([paths, recolored]) => {
+        if (imageWidget._btiPendingIcon === path)
+            applyResolvedIcon(imageWidget, iconResult, useSymbolic, paths, recolored);
+    });
 }
 
-export function applyResolvedIcon(image, iconResult, useSymbolic = false, iconPaths = null) {
+export function applyResolvedIcon(image, iconResult, useSymbolic = false, iconPaths = null, recoloredGicon = null) {
     if (!image || !iconResult) {
         if (image)
             image.clear();
@@ -455,6 +478,10 @@ export function applyResolvedIcon(image, iconResult, useSymbolic = false, iconPa
 
     if (iconResult.type === 'file') {
         const exists = iconPaths ? iconPaths.get(iconResult.value) !== false : true;
+        if (exists && recoloredGicon) {
+            image.set_from_gicon(recoloredGicon);
+            return;
+        }
         image.set_from_gicon(exists
             ? new Gio.FileIcon({file: Gio.File.new_for_path(iconResult.value)})
             : themedIcon('image-missing'));

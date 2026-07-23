@@ -1,5 +1,6 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import GdkPixbuf from 'gi://GdkPixbuf';
 
 import {warnOnce} from './logging.js';
 import {fileExists, readFileBytes, probePaths} from './fetch.js';
@@ -255,6 +256,142 @@ export function pathOrThemedIcon(value, exists = null) {
         return found ? new Gio.FileIcon({file}) : themedIcon('image-missing');
     }
     return themedIcon(value);
+}
+
+// Big enough that the baked raster stays crisp when scaled down to any tray or
+// preview size.
+const RECOLOR_RENDER_PX = 256;
+
+// Below this HSV saturation a pixel is neutral (white/black/gray) and takes the
+// tint. Brand colors sit well above it, so green/red/blue survive.
+const RECOLOR_SAT_THRESHOLD = 0.25;
+
+// Ignore the fully transparent background when deciding if anything chromatic
+// is worth protecting.
+const RECOLOR_MIN_ALPHA = 40;
+
+// The -symbolic suffix signals recolor intent. St and GTK both flatten such a
+// file to a single foreground, which destroys a multi-color status icon (green
+// circle and white check collapse to one color), and their live recoloring is
+// inconsistent across render paths and versions. So we bake the recolor
+// ourselves: chromatic pixels keep their color, neutral ones take the tint. The
+// result is a plain raster both toolkits render identically.
+export function isSymbolicName(path) {
+    return typeof path === 'string' && /-symbolic\.(svg|png)$/i.test(path);
+}
+
+// The color neutral parts take, matching a normal symbolic tray icon. The
+// accent has to come from the caller, since St resolves it from a theme node
+// and GTK from Adw, and a stale icon-color would win over it otherwise.
+export function symbolicTint(settings, accentColor = null) {
+    if (!settings.get_boolean('enable-custom-icon-style'))
+        return '#ffffff';
+    if (accentColor && settings.get_boolean('icon-use-accent-color'))
+        return accentColor;
+    return settings.get_string('icon-color');
+}
+
+// Baked icons live only in memory, keyed by path and tint, so the panel never
+// writes to the SSD and there is no cache file to leak.
+const _recolorCache = new Map();
+
+// Null tells the caller to keep its plain FileIcon: not a -symbolic file, or
+// unreadable. Monochrome files are baked too, because the toolkit's own
+// symbolic rendering drops fill-rule cutouts and paints them as a solid blob.
+// Async so the file read never blocks the compositor.
+export async function recolorSymbolicFile(path, tint, cancellable = null) {
+    if (!isSymbolicName(path))
+        return null;
+    const key = `${path}\0${tint}`;
+    if (_recolorCache.has(key))
+        return _recolorCache.get(key);
+    const gicon = await _bakeRecoloredIcon(path, tint, cancellable);
+    _recolorCache.set(key, gicon);
+    return gicon;
+}
+
+export function clearRecolorCache() {
+    _recolorCache.clear();
+}
+
+// tint -> gicon per path for the -symbolic file icons among configs, for a
+// caller that renders many rows at once. Absent paths fall back to FileIcon.
+export async function recolorSymbolicIconMap(configs, tint, cancellable = null) {
+    const paths = new Set();
+    for (const config of configs) {
+        if (isSymbolicName(config?.custom_icon))
+            paths.add(config.custom_icon);
+    }
+    const map = new Map();
+    await Promise.all([...paths].map(async path => {
+        const gicon = await recolorSymbolicFile(path, tint, cancellable);
+        if (gicon)
+            map.set(path, gicon);
+    }));
+    return map;
+}
+
+async function _bakeRecoloredIcon(path, tint, cancellable) {
+    const rgb = _parseRgb(tint);
+    if (!rgb)
+        return null;
+    try {
+        const bytes = await readFileBytes(Gio.File.new_for_path(path), cancellable);
+        if (!bytes?.length)
+            return null;
+        const stream = Gio.MemoryInputStream.new_from_bytes(GLib.Bytes.new(bytes));
+        const pixbuf = GdkPixbuf.Pixbuf.new_from_stream_at_scale(
+            stream, RECOLOR_RENDER_PX, RECOLOR_RENDER_PX, true, cancellable).add_alpha(false, 0, 0, 0);
+
+        // get_pixels returns a copy here, so mutate it and build a fresh pixbuf
+        // from the bytes rather than expecting the writes to land in place.
+        const data = pixbuf.get_pixels();
+        const stride = pixbuf.get_rowstride();
+        const [width, height] = [pixbuf.get_width(), pixbuf.get_height()];
+        _recolorNeutralPixels(data, stride, width, height, rgb);
+
+        const recolored = GdkPixbuf.Pixbuf.new_from_bytes(
+            GLib.Bytes.new(data), GdkPixbuf.Colorspace.RGB, true, 8, width, height, stride);
+        const [ok, png] = recolored.save_to_bufferv('png', [], []);
+        return ok && png?.length ? Gio.BytesIcon.new(GLib.Bytes.new(png)) : null;
+    } catch {
+        return null;
+    }
+}
+
+// Recolors neutral pixels to rgb, keeping their alpha so anti-aliased edges
+// tint smoothly. Chromatic pixels are left untouched.
+function _recolorNeutralPixels(data, stride, width, height, [tr, tg, tb]) {
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const o = y * stride + x * 4;
+            if (data[o + 3] < RECOLOR_MIN_ALPHA)
+                continue;
+            const max = Math.max(data[o], data[o + 1], data[o + 2]);
+            const min = Math.min(data[o], data[o + 1], data[o + 2]);
+            if (max === 0 || (max - min) / max < RECOLOR_SAT_THRESHOLD) {
+                data[o] = tr;
+                data[o + 1] = tg;
+                data[o + 2] = tb;
+            }
+        }
+    }
+}
+
+// The forms gsettings stores a color in: #rgb, #rrggbb, and rgb()/rgba().
+function _parseRgb(color) {
+    if (typeof color !== 'string')
+        return null;
+    // 8 digits carry an alpha St appends in to_string, which the tint ignores.
+    const hex = color.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
+    if (hex) {
+        const h = hex[1];
+        const wide = h.length > 3;
+        const part = i => parseInt(wide ? h.slice(i * 2, i * 2 + 2) : h[i].repeat(2), 16);
+        return [part(0), part(1), part(2)];
+    }
+    const rgb = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+    return rgb ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])] : null;
 }
 
 // GTK and St disagree on how they resolve a multi-name themed icon, so the one

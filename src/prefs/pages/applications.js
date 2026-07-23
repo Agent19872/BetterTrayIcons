@@ -6,9 +6,9 @@ import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions
 
 import {getAppConfigs, deleteAppConfig, resetAllAppConfigs, displayAppName} from '../../shared/appConfig.js';
 import {connectScoped, clearIds, debounceTo, removeTimer} from '../../shared/lifecycle.js';
-import {resolveIcon, probeIconPaths, themeProbeKey} from '../../shared/icon.js';
+import {resolveIcon, probeIconPaths, themeProbeKey, recolorSymbolicIconMap} from '../../shared/icon.js';
 import AppDialog from '../dialogs/appDialog.js';
-import {createButton, createIconButton, createImage, applyResolvedIcon, hasThemeIcon} from '../widgets/gtkHelpers.js';
+import {createButton, createIconButton, createImage, applyResolvedIcon, hasThemeIcon, prefsSymbolicTint} from '../widgets/gtkHelpers.js';
 import {createActionRow, NEXT_ICON_NAME} from '../widgets/rows.js';
 import {addToast} from '../widgets/sidebar.js';
 import {showConfirmationDialog} from '../dialogs/dialogs.js';
@@ -77,14 +77,16 @@ export class ApplicationsPage extends Adw.PreferencesPage {
         apps.sort((a, b) => displayAppName(a, a.id)
             .localeCompare(displayAppName(b, b.id), undefined, {sensitivity: 'base'}));
 
-        probeIconPaths(apps).then(iconPaths => {
-            if (gen === this._buildGen)
-                this._renderApps(apps, iconPaths);
-        });
+        Promise.all([probeIconPaths(apps), recolorSymbolicIconMap(apps, prefsSymbolicTint(this._settings))])
+            .then(([iconPaths, recoloredIcons]) => {
+                if (gen === this._buildGen)
+                    this._renderApps(apps, iconPaths, recoloredIcons);
+            });
     }
 
-    _renderApps(apps, iconPaths) {
+    _renderApps(apps, iconPaths, recoloredIcons) {
         this._iconPaths = iconPaths;
+        this._recoloredIcons = recoloredIcons;
         if (this._appsGroup) {
             this.remove(this._appsGroup);
             this._appsGroup = null;
@@ -120,7 +122,8 @@ export class ApplicationsPage extends Adw.PreferencesPage {
                 const resolved = resolveIcon(app, hasThemeIcon,
                     iconPaths.get(app.cached_icon_path),
                     themeKey ? iconPaths.get(themeKey) ?? null : null);
-                applyResolvedIcon(iconImage, resolved, useSymbolic, iconPaths);
+                applyResolvedIcon(iconImage, resolved, useSymbolic, iconPaths,
+                    recoloredIcons.get(resolved.value) ?? null);
             }
 
             let flavor = PACKAGING_LABELS[app.packaging] ?? null;

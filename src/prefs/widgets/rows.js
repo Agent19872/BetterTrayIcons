@@ -322,7 +322,7 @@ export function createSubpageRow(title, subtitle, window, SubpageClass, settings
 
 export function createIconPickerRow(title, settings, key, window, PickerClass, iconList, options = {}) {
     const iconPreview = new Gtk.Image({pixel_size: 24, valign: Gtk.Align.CENTER});
-    applyPathIcon(iconPreview, settings.get_string(key));
+    applyPathIcon(iconPreview, settings.get_string(key), settings);
 
     const row = createActionRow(title, settings.get_string(key), {
         suffixWidgets: [iconPreview],
@@ -336,7 +336,7 @@ export function createIconPickerRow(title, settings, key, window, PickerClass, i
     const updateRow = () => {
         const newVal = settings.get_string(key);
         row.set_subtitle(newVal);
-        applyPathIcon(iconPreview, newVal);
+        applyPathIcon(iconPreview, newVal, settings);
     };
 
     connectScoped(row, settings, `changed::${key}`, updateRow);

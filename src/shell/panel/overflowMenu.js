@@ -2,8 +2,7 @@ import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
-import {disposeAll} from '../../shared/lifecycle.js';
-import {generateBoxStyle, createPanelMenu} from '../utils/actor.js';
+import {generateBoxStyle, createPanelMenu, destroyMenuSafely} from '../utils/actor.js';
 import {ITEM_SPACING_PX, ICON_MARGIN_PX, DEFAULT_ICON_PADDING_PX} from '../../const.js';
 
 const OVERFLOW_GRID_MIN_ROW_HEIGHT_PX = 24;
@@ -234,9 +233,8 @@ export class OverflowMenu {
     }
 
     destroy() {
-        if (this._menu)
-            Main.panel.menuManager?.removeMenu(this._menu);
-        disposeAll(this, 'destroy', '_menu');
+        destroyMenuSafely(this._menu);
+        this._menu = null;
         this._container = null;
     }
 }

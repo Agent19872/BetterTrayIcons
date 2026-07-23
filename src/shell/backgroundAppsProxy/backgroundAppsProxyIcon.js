@@ -1,6 +1,7 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Util from 'resource:///org/gnome/shell/misc/util.js';
 
@@ -49,7 +50,6 @@ export class BackgroundAppsProxyIcon {
         this._unreadUnsub = addUnreadListener(this._unreadCandidates,
             () => this._syncBadge());
 
-        this._menuManager = new PopupMenu.PopupMenuManager(this.actor);
         this._draggable = setupIconDragSource({
             actor: this.actor,
             appId,
@@ -140,7 +140,7 @@ export class BackgroundAppsProxyIcon {
     _createMenu() {
         const menu = createPanelMenu(menuAnchorFor(this.actor));
         trackDisposal(menu.actor);
-        this._menuManager.addMenu(menu);
+        Main.panel.menuManager?.addMenu(menu);
 
         const show = new PopupMenu.PopupMenuItem(_('Show'));
         show.connect('activate', () => this._activate());
@@ -232,7 +232,6 @@ export class BackgroundAppsProxyIcon {
         disconnectAll(this, this.actor, '_actorSignals');
 
         this._destroyMenu();
-        this._menuManager = null;
 
         if (!isDisposed(this.actor))
             this.actor.destroy();

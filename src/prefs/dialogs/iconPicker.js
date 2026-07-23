@@ -150,7 +150,7 @@ export default class IconPickerDialog extends Adw.PreferencesDialog {
             text: this._currentIcon || '',
         });
 
-        const updateCustomPreview = () => applyPathIcon(previewImg, entry.text.trim());
+        const updateCustomPreview = () => applyPathIcon(previewImg, entry.text.trim(), this._settings);
         entry.connect('changed', updateCustomPreview);
         updateCustomPreview();
 

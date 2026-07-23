@@ -1,9 +1,9 @@
 import GLib from 'gi://GLib';
-import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {warn} from '../../shared/logging.js';
 import {configRenderDelta, getAppConfigMap, getAppConfigValue, setAppConfigValue, updateAppConfig, reseedIfForgotten, formatAppName, isVolatileIconName, unreadBadgeEnabled} from '../../shared/appConfig.js';
-import {clearIds, disconnectSignal, disconnectAll, disposeAll, removeTimer, ruleDispatcher} from '../../shared/lifecycle.js';
+import {clearIds, debounceTo, disconnectSignal, disconnectAll, disposeAll, removeTimer, ruleDispatcher} from '../../shared/lifecycle.js';
 import {getItemAddress, refreshPropertyOnProxy, refreshStringOnProxy} from '../utils/dbus.js';
 import {identifyApp, resolveTrayIcon} from '../utils/icons.js';
 import {pickDisplayTitle} from '../utils/appId.js';
@@ -25,6 +25,18 @@ const ICON_UPDATE_MIN_INTERVAL_MS = 250;
 const TITLE_UPDATE_DEBOUNCE_MS = 300;
 
 const MENU_REOPEN_GUARD_MS = 200;
+
+const MENU_DROP_DELAY_MS = 0;
+
+// Keys that need a fresh resolve rather than a restyle. The color ones decide
+// the tint a recolored custom icon is baked with, which no restyle can change.
+const ICON_RESOLVE_KEYS = Object.freeze([
+    'icon-size',
+    'enable-symbolic-icons',
+    'icon-color',
+    'enable-custom-icon-style',
+    'icon-use-accent-color',
+]);
 
 export class TrayIcon {
     constructor(extensionDir, busName, objectPath, settings, proxy, onReady, onDestroy, onCloseMenu, onDragStateChange = null) {
@@ -58,8 +70,8 @@ export class TrayIcon {
         this._gObjectSignals = [];
 
         this._menu = null;
+        this._menuDropId = 0;
         this._menuClient = null;
-        this._menuManager = null;
         this._tooltip = null;
         this._clickController = null;
         this._lastCloseTime = 0;
@@ -164,7 +176,7 @@ export class TrayIcon {
                 },
             },
             {match: key => TRAY_STYLE_KEYS.includes(key), run: () => refreshTrayStyle(this.actor, this._iconActor, this._settings)},
-            {match: key => key === 'icon-size' || key === 'enable-symbolic-icons', run: () => this._queueUpdate()},
+            {match: key => ICON_RESOLVE_KEYS.includes(key), run: () => this._queueUpdate()},
             {match: key => key === 'enable-tooltips', run: () => this._swallow(this._updateTitle(), 'updateTitle')},
             {match: key => DRAG_SETTING_KEYS.includes(key), run: () => syncDragEnabled(this._draggable, this._settings)},
         ];
@@ -262,7 +274,6 @@ export class TrayIcon {
 
         this._draggable?.setClickController(this._clickController);
 
-        this._menuManager = new PopupMenu.PopupMenuManager(this.actor);
         refreshTrayStyle(this.actor, this._iconActor, this._settings);
     }
 
@@ -314,7 +325,8 @@ export class TrayIcon {
             this._settings,
             this.appId,
             this._pixmapHash,
-            this._pid
+            this._pid,
+            this._iconTint()
         );
 
         if (this._isDestroyed || generation !== this._updateGen)
@@ -349,6 +361,18 @@ export class TrayIcon {
             if (detected.iconThemePath)
                 updateData.icon_theme_path = detected.iconThemePath;
             updateAppConfig(this._settings, this.appId, updateData);
+        }
+    }
+
+    // The color St paints a symbolic icon in this actor. It already resolves the
+    // accent keyword and the panel default, which settings alone cannot, so a
+    // baked icon matches what a themed one would look like. Null before the
+    // actor is styled, the caller falls back to the plain settings color.
+    _iconTint() {
+        try {
+            return this._iconActor.get_theme_node().get_foreground_color().to_string();
+        } catch {
+            return null;
         }
     }
 
@@ -457,17 +481,14 @@ export class TrayIcon {
             this._createMenu();
             await this._menuClient.buildMenu(this._menu);
             if (this._isDestroyed) {
-                this._menu?.destroy();
+                this._disposeMenu();
                 return;
             }
 
             this._presentMenu();
         } catch (e) {
             warn(`Failed to open context menu for ${this.id}: ${e.message}`);
-            if (this._menu) {
-                this._menu.destroy();
-                this._menu = null;
-            }
+            this._disposeMenu();
             // An app can advertise a menu path and still serve a menu we cannot
             // build. Without this the right-click did nothing at all, forever,
             // while the app's own ContextMenu was there the whole time.
@@ -505,19 +526,34 @@ export class TrayIcon {
     }
 
     _createMenu() {
-        if (this._menu) {
-            this._menu.destroy();
-            this._menu = null;
-        }
+        this._disposeMenu();
 
         this._menu = createPanelMenu(menuAnchorFor(this.actor));
         trackDisposal(this._menu.actor);
-        this._menuManager.addMenu(this._menu);
 
-        this._menu.connect('open-state-changed', (_menu, isOpen) => {
-            if (!isOpen)
-                this._lastCloseTime = GLib.get_monotonic_time();
+        // Hide Top Bar reads Main.panel.menuManager.activeMenu before it collapses,
+        // and a private manager leaves that null while this menu is open.
+        Main.panel.menuManager?.addMenu(this._menu);
+
+        this._menu.connect('open-state-changed', (menu, isOpen) => {
+            if (isOpen)
+                return;
+
+            this._lastCloseTime = GLib.get_monotonic_time();
+
+            // A closed menu stays registered and still answers the manager's
+            // hover switch, which reopens this stale copy instead of rebuilding
+            // it. The drop waits a turn because the menu is mid-emission here.
+            debounceTo(this, '_menuDropId', MENU_DROP_DELAY_MS, () => {
+                if (this._menu === menu)
+                    this._disposeMenu();
+            });
         });
+    }
+
+    _disposeMenu() {
+        destroyMenuSafely(this._menu);
+        this._menu = null;
     }
 
     _presentMenu() {
@@ -525,8 +561,7 @@ export class TrayIcon {
         // compare undefined to 0 and never fired. An app serving an empty menu
         // got a blank popup instead of its own ContextMenu.
         if (this._menu.isEmpty()) {
-            this._menu.destroy();
-            this._menu = null;
+            this._disposeMenu();
             this._fallbackToRemoteContextMenu();
             return;
         }
@@ -546,17 +581,15 @@ export class TrayIcon {
 
         disposeAll(this, 'destroy', '_draggable', '_clickController', '_tooltip');
         disconnectSignal(this, this._settings, '_settingsConnectId');
-        clearIds(this, removeTimer, '_updateDeferId', '_titleDeferId');
+        clearIds(this, removeTimer, '_updateDeferId', '_titleDeferId', '_menuDropId');
 
         if (this._proxy) {
             disconnectAll(this, this._proxy, '_proxySignals', 'disconnectSignal');
             disconnectAll(this, this._proxy, '_gObjectSignals');
         }
 
-        destroyMenuSafely(this._menu);
-        this._menu = null;
+        this._disposeMenu();
         disposeAll(this, 'destroy', '_menuClient');
-        this._menuManager = null;
 
         if (this.actor && !isDisposed(this.actor))
             this.actor.destroy();

@@ -5,7 +5,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import {disposeAll} from '../../shared/lifecycle.js';
-import {isDisposed, trackDisposal, computeToggleStyle, createPanelMenu, applyPanelClasses} from '../utils/actor.js';
+import {isDisposed, trackDisposal, computeToggleStyle, createPanelMenu, destroyMenuSafely, applyPanelClasses} from '../utils/actor.js';
 import {ClickController} from '../features/clickController.js';
 
 export class ToggleButton {
@@ -196,15 +196,10 @@ export class ToggleButton {
     }
 
     destroy() {
-        // The action menu has to leave Main.panel.menuManager before it's
-        // destroyed.
-        if (this._actionMenu) {
-            try {
-                Main.panel.menuManager?.removeMenu(this._actionMenu);
-            } catch { /* not in manager */ }
-        }
+        destroyMenuSafely(this._actionMenu);
+        this._actionMenu = null;
 
-        disposeAll(this, 'destroy', '_clickController', '_actionMenu');
+        disposeAll(this, 'destroy', '_clickController');
         this._actionMenuOverflowItem = null;
 
         if (this.actor && !isDisposed(this.actor))

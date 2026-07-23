@@ -132,8 +132,16 @@ export function menuAnchorFor(actor) {
 
 // The menu actor can already be C-disposed during shutdown.
 export function destroyMenuSafely(menu) {
-    if (menu && !isDisposed(menu.actor))
-        menu.destroy();
+    if (!menu || isDisposed(menu.actor))
+        return;
+
+    // Without closing first, removeMenu leaves the manager pointing at this
+    // menu and the next close pops a grab that is already gone.
+    if (menu.isOpen)
+        menu.close(POPUP_ANIMATION_NONE);
+
+    Main.panel.menuManager?.removeMenu(menu);
+    menu.destroy();
 }
 
 export function placeIndicatorInPanel(indicator, settings) {

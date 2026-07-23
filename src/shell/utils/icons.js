@@ -4,7 +4,7 @@ import GdkPixbuf from 'gi://GdkPixbuf';
 import St from 'gi://St';
 import Shell from 'gi://Shell';
 
-import {resolveIcon, findIconInTheme, buildSymbolicCandidates, orderThemedNames, writeCachedIcon, deleteCachedIcon, MONO_ASSET_SUFFIX_RE} from '../../shared/icon.js';
+import {resolveIcon, findIconInTheme, buildSymbolicCandidates, orderThemedNames, writeCachedIcon, deleteCachedIcon, recolorSymbolicFile, isSymbolicName, symbolicTint, clearRecolorCache, MONO_ASSET_SUFFIX_RE} from '../../shared/icon.js';
 import {updateAppConfig, migrateLegacyConfig, claimAppId, getAppConfigMap, getAppConfigValue, setAppConfigValue, findStateIconEntry, recordSeenStateIcons, isVolatileIconName, stateNameOf, unreadBadgeEnabled, ATTENTION_STATE_KEY} from '../../shared/appConfig.js';
 import {readFileBytes, fileExists} from '../../shared/fetch.js';
 import {warnOnce} from '../../shared/logging.js';
@@ -91,7 +91,7 @@ export async function identifyApp(proxy, busName, settings, onRekey = null) {
 // every time.
 let _sharedIconTheme = null;
 
-export async function resolveTrayIcon(proxy, settings, appId, lastPixmapHash = null, pid = null) {
+export async function resolveTrayIcon(proxy, settings, appId, lastPixmapHash = null, pid = null, tint = null) {
     const [rawStatus, detectedName, overlayName] = await Promise.all([
         refreshStringOnProxy(proxy, 'Status'),
         refreshStringOnProxy(proxy, 'IconName'),
@@ -99,7 +99,7 @@ export async function resolveTrayIcon(proxy, settings, appId, lastPixmapHash = n
     ]);
     const status = rawStatus ?? 'Passive';
 
-    const resolved = await _resolveIcon(proxy, settings, appId, lastPixmapHash, status, detectedName, pid);
+    const resolved = await _resolveIcon(proxy, settings, appId, lastPixmapHash, status, detectedName, pid, tint);
     return {..._applyOverlayEmblem(resolved, overlayName), status};
 }
 
@@ -118,7 +118,7 @@ function _applyOverlayEmblem(resolved, overlayName) {
     return {...resolved, gicon: emblemed, iconName: null};
 }
 
-async function _resolveIcon(proxy, settings, appId, lastPixmapHash, status, detectedName, pid) {
+async function _resolveIcon(proxy, settings, appId, lastPixmapHash, status, detectedName, pid, tint) {
     const generation = _generation;
     let attentionName = null;
     if (status === 'NeedsAttention')
@@ -180,11 +180,11 @@ async function _resolveIcon(proxy, settings, appId, lastPixmapHash, status, dete
         }
         mapped ??= findStateIconEntry(stateIcons, stateNameOf(detectedName))?.[1];
         if (mapped)
-            return {...await _configuredIconAsync(mapped, settings), detected, badge};
+            return {...await _configuredIconAsync(mapped, settings, tint), detected, badge};
     }
 
     if (customIcon && (!hasAlert || alertCovered))
-        return {...await _configuredIconAsync(customIcon, settings), detected, badge};
+        return {...await _configuredIconAsync(customIcon, settings, tint), detected, badge};
 
     // Qt serves showMessage's custom icon as an attention pixmap while the
     // calm IconName stays set. Nulling the name here sends every branch
@@ -404,8 +404,13 @@ function _dropCachedIcon(settings, appId, map) {
 
 // The icon update runs on the shell's main loop, where a blocking stat stalls
 // the whole desktop rather than one window.
-async function _configuredIconAsync(value, settings) {
+async function _configuredIconAsync(value, settings, tint = null) {
     const exists = value?.startsWith('/') ? await fileExists(value) : null;
+    if (exists && isSymbolicName(value)) {
+        const gicon = await recolorSymbolicFile(value, tint ?? symbolicTint(settings));
+        if (gicon)
+            return {gicon, iconName: null};
+    }
     return configuredIcon(value, settings, exists);
 }
 
@@ -484,6 +489,7 @@ export function clearIconCaches() {
     _lastSnapshotAt.clear();
     _snapshotSeq.clear();
     _sharedIconTheme = null;
+    clearRecolorCache();
 }
 
 async function _throttledSnapshot(appId, generation, writeFn, {force = false} = {}) {
