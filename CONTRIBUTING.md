@@ -109,13 +109,17 @@ media/                    # listing icon and README screenshots, not shipped in 
 src/
 ├── shared/               # code reachable from both shell and prefs (logging, settings IO, app config, icon resolver)
 ├── shell/                # code running inside gnome-shell
-│   ├── features/         # click controller, drag-and-drop, tooltip
-│   └── utils/            # shell-side helpers (icons, dbus, actor)
+│   ├── panel/            # the panel indicator with its toggle button and overflow popup
+│   ├── sni/              # StatusNotifierItem source: watcher, tray icon, dbusmenu client
+│   ├── xembed/           # XEmbed source for Wine and Proton apps
+│   ├── backgroundAppsProxy/  # proxy icons for windowless background apps
+│   ├── features/         # click controller, drag-and-drop, tooltip, background apps
+│   └── utils/            # shell-side helpers (icons, dbus, actor, app ids)
 └── prefs/                # code running inside the preferences window
     ├── pages/            # top-level prefs pages (general, appearance, actions, applications, about)
     ├── subpages/         # drill-down pages (overflow menu, toggle button, tray icons)
-    ├── dialogs/          # modal dialogs such as the app editor and the sync dialog
-    └── widgets/          # composite widget classes (icon picker, action config)
+    ├── dialogs/          # dialogs (app editor, sync, icon picker, config)
+    └── widgets/          # widget factories (rows, sidebar, previews, gtk helpers)
 ```
 
 Branching workflow:
@@ -201,7 +205,7 @@ That API only returns people with at least one commit merged into the default br
 - **A merged PR does.** Translation PRs, documentation fixes, code patches, anything that lands in `main`. Even a one-line typo fix counts.
 - **Co-authored commits count too.** Add a `Co-authored-by:` line at the bottom of the commit message and GitHub will list each named co-author.
 
-If you'd rather not appear in the in-app list, head over to the [Contributor Opt-Out](../../wiki/Contributor-Opt-Out) page on the wiki.
+If you'd rather not appear in the in-app list, head over to the [Contributor Opt-Out](../../wiki/Contributor‐Opt‐Out) page on the wiki.
 
 ## Questions
 
