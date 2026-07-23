@@ -4,14 +4,17 @@ import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
-import {warn} from '../shared/logging.js';
-import {clearIds, removeTimer} from '../shared/lifecycle.js';
-import {loadInterfaceXML} from './utils/dbus.js';
-import {isDisposed} from './utils/actor.js';
-import {GEOMETRY_SETTLE_MS, DBUS_MENU_YIELD_EVERY_N_ITEMS} from '../const.js';
+import {warn} from '../../shared/logging.js';
+import {clearIds, debounceTo, removeTimer} from '../../shared/lifecycle.js';
+import {loadInterfaceXML} from '../utils/dbus.js';
+import {isDisposed, stageScaleFactor} from '../utils/actor.js';
 
-// One generated proxy class per process. Every icon builds its own
-// client, but the XML read and wrapper generation are identical.
+const GEOMETRY_SETTLE_MS = 50;
+
+const DBUS_MENU_YIELD_EVERY_N_ITEMS = 20;
+
+// Every icon builds its own client, but the XML read and wrapper generation
+// are identical, so generate the proxy class once per process.
 let _MenuProxyClass = null;
 
 export class DBusMenuClient {
@@ -27,6 +30,14 @@ export class DBusMenuClient {
     }
 
     init() {
+        // The path comes from the item's Menu property, so a peer can put
+        // anything there. Measured: the proxy still constructs and its callback
+        // still reports success, it just logs a GLib assertion per signal
+        // subscription and answers nothing afterwards. Failing here instead
+        // sends the caller to the app's own ContextMenu right away.
+        if (!GLib.Variant.is_object_path(this.objectPath))
+            return Promise.reject(new Error(`Invalid menu object path: ${this.objectPath}`));
+
         _MenuProxyClass ??= Gio.DBusProxy.makeProxyWrapper(
             loadInterfaceXML(this.extensionDir, 'DBusMenu.xml'));
 
@@ -46,6 +57,15 @@ export class DBusMenuClient {
     }
 
     async buildMenu(gnomeMenu) {
+        if (!this.proxy)
+            return;
+
+        // Apps that fill the root only on demand answer the first GetLayout
+        // with no children, and a childless root reads as "no menu at all".
+        try {
+            await this.proxy.AboutToShowAsync(0);
+        } catch { /* the root call is optional, not every server answers it */ }
+
         if (!this.proxy)
             return;
 
@@ -84,10 +104,16 @@ export class DBusMenuClient {
         if (!visible)
             return;
 
-        const label = getProp('label', '').replace(/_/g, '');
-        const type = getProp('type', 'standard');
+        // The peer picks these types, and a non-string label would throw
+        // out of buildMenu and cost the whole menu, not just this item.
+        const label = String(getProp('label', '')).replace(/_/g, '');
+        const type = String(getProp('type', 'standard'));
         const enabled = getProp('enabled', true);
-        const iconName = getProp('icon-name', null);
+        // Same reason label and type go through String() above, except a
+        // coerced icon name would only resolve to nothing anyway: St.Icon
+        // throws on a non-string, and that throw costs the whole menu.
+        const rawIconName = getProp('icon-name', null);
+        const iconName = typeof rawIconName === 'string' ? rawIconName : null;
         const toggleType = getProp('toggle-type', '');
         const toggleState = getProp('toggle-state', 0);
 
@@ -140,8 +166,8 @@ export class DBusMenuClient {
         if (!children || children.length === 0)
             return;
 
-        // Sequential awaits are intentional: we yield to the main loop
-        // every N items so large menus don't block the UI thread.
+        // Yield to the main loop every N items so a large menu does not
+        // freeze the UI while it builds.
         /* eslint-disable no-await-in-loop */
         for (let i = 0; i < children.length; i++) {
             await this._parseNode(children[i], parent);
@@ -183,13 +209,11 @@ export class DBusMenuClient {
         this._pinMenuWidth(submenu._getTopMenu());
     }
 
-    // Submenus sit collapsed inside the menu box, so opening one would
-    // widen the whole menu and closing it would shrink it back.
-    // Pinning to the widest subtree up front keeps the width steady.
+    // Submenus sit collapsed inside the menu box, so opening one would widen
+    // the whole menu and closing it would shrink it back.
     _pinMenuWidth(topMenu) {
         // The measured width is already scaled, CSS px would scale again.
-        const scale = St.ThemeContext.get_for_stage(global.stage).scale_factor;
-        const width = Math.ceil(this._maxNaturalWidth(topMenu) / scale);
+        const width = Math.ceil(this._maxNaturalWidth(topMenu) / stageScaleFactor());
         topMenu.box.style = `min-width: ${width}px`;
     }
 
@@ -205,9 +229,8 @@ export class DBusMenuClient {
     _onItemClicked(id, parentMenu) {
         this._sendEvent(id, 'clicked');
 
-        // Walk up the parent chain to find the outermost PopupMenu. Submenus
-        // expose `_parent`. The top-level PopupMenu reaches itself via the
-        // owning actor's `_delegate.menu`.
+        // Submenus expose `_parent`, but the top-level PopupMenu doesn't, it
+        // is only reachable via the owning actor's `_delegate.menu`.
         let iter = parentMenu;
         while (iter) {
             if (iter instanceof PopupMenu.PopupMenu) {
@@ -223,14 +246,8 @@ export class DBusMenuClient {
         }
 
         const keepOverflow = this.settings.get_boolean('keep-popup-after-click');
-        if (!keepOverflow && this.onCloseMenu) {
-            clearIds(this, removeTimer, '_closeTimeoutId');
-            this._closeTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, GEOMETRY_SETTLE_MS, () => {
-                this._closeTimeoutId = 0;
-                this.onCloseMenu();
-                return GLib.SOURCE_REMOVE;
-            });
-        }
+        if (!keepOverflow && this.onCloseMenu)
+            debounceTo(this, '_closeTimeoutId', GEOMETRY_SETTLE_MS, () => this.onCloseMenu());
     }
 
     _sendEvent(id, eventId) {

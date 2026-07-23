@@ -8,8 +8,20 @@ import {warn} from './logging.js';
 // from here, which they all do already.
 const promisify = (proto, ...methods) => methods.forEach(m => Gio._promisify(proto, m));
 
-promisify(Gio.File.prototype, 'load_contents_async', 'enumerate_children_async', 'query_info_async');
+// Cancellation is teardown, not a failure, so callers either swallow or
+// rethrow it while every other error stays an error.
+export const isCancelledError = e => !!e?.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED);
+
+promisify(Gio.File.prototype,
+    'load_contents_async',
+    'replace_contents_async',
+    'enumerate_children_async',
+    'query_info_async',
+    'read_async',
+    'replace_async',
+    'delete_async');
 promisify(Gio.FileEnumerator.prototype, 'next_files_async', 'close_async');
+promisify(Gio.OutputStream.prototype, 'splice_async');
 
 export async function fetchJson(url, cancellable = null) {
     const bytes = await fetchBytes(url, cancellable);
@@ -21,15 +33,12 @@ export async function fetchBytes(url, cancellable = null) {
         const contents = await readFileBytes(Gio.File.new_for_uri(url), cancellable);
         return new GLib.Bytes(contents);
     } catch (e) {
-        if (!e?.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+        if (!isCancelledError(e))
             warn(`fetch: ${url} failed: ${e.message}`);
         throw e;
     }
 }
 
-// GJS strips the boolean ok value from promisified throwing calls, the
-// resolved tuple is [contents, etag] and failures reject instead.
-// One round trip per path on a network mount, so probe them all at once.
 export async function probePaths(paths, cancellable = null) {
     const probed = await Promise.all(
         [...paths].map(async path => [path, await fileExists(path, cancellable)])
@@ -49,12 +58,14 @@ export async function fileExists(path, cancellable = null) {
         );
         return true;
     } catch (e) {
-        if (e?.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+        if (isCancelledError(e))
             throw e;
         return false;
     }
 }
 
+// GJS strips the boolean ok value from promisified throwing calls, the
+// resolved tuple is [contents, etag] and failures reject instead.
 export async function readFileBytes(file, cancellable = null) {
     const [contents] = await file.load_contents_async(cancellable);
     return contents;
@@ -87,3 +98,29 @@ export async function readDirNames(file, cancellable = null) {
     return names;
 }
 
+// A dead or unreadable /proc entry is normal, the process may exit mid-read.
+// Cancellation is not, so it still propagates.
+export async function readProcFile(pid, name, cancellable = null) {
+    if (!pid)
+        return null;
+    try {
+        return await readFileText(Gio.File.new_for_path(`/proc/${pid}/${name}`), cancellable);
+    } catch (e) {
+        if (isCancelledError(e))
+            throw e;
+        return null;
+    }
+}
+
+export async function readEnviron(pid, cancellable = null) {
+    const raw = await readProcFile(pid, 'environ', cancellable);
+    if (!raw)
+        return new Map();
+    const map = new Map();
+    for (const entry of raw.split('\0')) {
+        const idx = entry.indexOf('=');
+        if (idx > 0)
+            map.set(entry.slice(0, idx), entry.slice(idx + 1));
+    }
+    return map;
+}

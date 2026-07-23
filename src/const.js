@@ -1,93 +1,33 @@
-// ------- Logging -------
-
-export const LOG_PREFIX = '[BetterTrayIcons] ';
-
-
-// ------- External URLs -------
-
-export const GIT_REPO_URL = 'https://github.com/nexaknight/BetterTrayIcons';
-export const LICENSE_URL = 'https://github.com/nexaknight/BetterTrayIcons/blob/main/LICENSE';
-export const SPONSOR_URL = 'https://github.com/sponsors/nexaknight';
-export const TRANSLATE_URL = 'https://github.com/nexaknight/BetterTrayIcons/wiki/Translation-Guidelines';
-
-
-// ------- Input timing (ms) -------
-
-export const LONG_PRESS_TIMEOUT_MS = 600;
-export const DOUBLE_CLICK_MAX_DELAY_MS = 250;
-
-
-// ------- UI update timing (ms) -------
-
-export const ICON_UPDATE_DELAY_MS = 20;
-export const LAYOUT_UPDATE_DELAY_MS = 100;
-// One Clutter relayout cycle after reparenting.
-export const GEOMETRY_SETTLE_MS = 50;
-
-
-// ------- Debounce intervals (ms) -------
-
-// Typed entries in the prefs UI.
-export const ENTRY_DEBOUNCE_MS = 300;
-// Icon-picker page entry, slower to allow multi-digit input.
-export const PAGE_JUMP_DEBOUNCE_MS = 500;
-// Coalesce app-configs bursts into one Applications page rebuild.
-export const PAGE_REBUILD_DEBOUNCE_MS = 100;
-// Auto-sync filesystem writes, prevents reading mid-write.
-export const AUTO_SYNC_DEBOUNCE_MS = 1000;
-// Coalesce bursts of local settings changes before rewriting the file.
-export const AUTO_PUSH_DEBOUNCE_MS = 2000;
-
-
-// ------- Guard windows (ms) -------
-
-// Wait for DBus name ownership before scanning existing services.
-export const INITIAL_SCAN_DELAY_MS = 500;
-// Suppress auto-push after a pull so import signals don't echo to disk.
-export const AUTO_PUSH_GUARD_AFTER_IMPORT_MS = 3000;
-// Reject reopening the same context menu within this window.
-export const MENU_REOPEN_GUARD_MS = 200;
-
-
-// ------- Layout / sizing (px) -------
+// Two kinds of values live here: ones shared across the shell and prefs
+// processes that have no owning shared module, and ones that stay central
+// because outside contributors edit them. Everything else sits at the top
+// of the module that uses it.
 
 export const ITEM_SPACING_PX = 6;
+
 export const ICON_MARGIN_PX = 1;
-// Minimum row height for the grid overflow layout.
-export const OVERFLOW_GRID_MIN_ROW_HEIGHT_PX = 24;
-// Pill-shape radius for non-custom tray icon buttons.
+
+export const DEFAULT_ICON_PADDING_PX = 5;
+
 export const DEFAULT_PILL_RADIUS_PX = 50;
-// Keeps the gear column on the actions page flush.
-export const ACTION_DROPDOWN_WIDTH_PX = 240;
 
+// Touch has no buttons, so it binds under its own name next to left/middle/right.
+export const TOUCH_BINDING = 'tap';
 
-// ------- Drag-and-drop -------
+export const BOX_SIDES = Object.freeze(['top', 'right', 'bottom', 'left']);
 
-export const DRAG_ACTOR_MAX_SIZE_PX = 48;
-// Matches GTK's default drag threshold.
-export const DND_DRAG_THRESHOLD_PX = 8;
-// Floating drag preview opacity (0-255).
-export const DRAG_ACTOR_OPACITY = 180;
-// Source icon opacity while dragging (0-255).
-export const DRAGGING_SOURCE_OPACITY = 60;
-// Gaps of 10 leave room for manual reorder edits between drags.
-export const PRIORITY_STEP = 10;
-// Long-press settings that gate DnD, watched by every icon class.
-export const DRAG_SETTING_KEYS = Object.freeze([
-    'tray-action-left-long',
-    'tray-action-middle-long',
-    'tray-action-right-long',
-]);
-
-
-// ------- Tray icons -------
-
-// Tray icons restyle only on these keys.
+// The shell restyles tray icons on these, the prefs reset and preview them.
 export const TRAY_STYLE_KEYS = Object.freeze([
     'enable-custom-icon-style',
     'icon-size',
-    'icon-padding-vertical',
-    'icon-padding-horizontal',
+    'icon-padding-top',
+    'icon-padding-bottom',
+    'icon-padding-left',
+    'icon-padding-right',
+    'icon-margin-top',
+    'icon-margin-bottom',
+    'icon-margin-left',
+    'icon-margin-right',
     'icon-border-radius',
     'icon-color',
     'icon-hover-color',
@@ -99,165 +39,24 @@ export const TRAY_STYLE_KEYS = Object.freeze([
     'icon-hover-background-use-accent-color',
 ]);
 
-// Config entry fields a tray icon renders from. Lets an icon skip the
-// refetch when an app-configs write didn't touch any of them.
-export const TRAY_CONFIG_RENDER_FIELDS = Object.freeze([
-    'is_hidden',
-    'custom_title',
-    'custom_icon',
-    'cached_icon_path',
-    'detected_icon',
-    'icon_theme_path',
-]);
+// The badge_style vocabulary the shell renders and the prefs dialog writes.
+// The first position is the default, and each name encodes its corner as
+// vertical-horizontal, which is what the shell derives its alignment from.
+export const BADGE_POSITIONS = Object.freeze(['bottom-right', 'bottom-left', 'top-right', 'top-left']);
+// GNOME's destructive red, so the badge reads as an alert in any theme.
+export const BADGE_DEFAULT_COLOR = '#e01b24';
+export const BADGE_DEFAULT_TEXT_COLOR = '#ffffff';
 
+// Conceptually these belong to the live-preview system in prefs/widgets/
+// preview.js, which is their only real reader. They sit here instead because
+// gtkHelpers.js also needs PREVIEW_STOCK_POPUP_CSS (for the static layout
+// thumbnails' matching backdrop) and importing it from preview.js would
+// create an import cycle between the two.
+export const PREVIEW_ELEMENT_SHADOW_CSS = 'box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);';
+export const PREVIEW_STOCK_POPUP_CSS =
+    `background-color: rgba(48, 48, 48, 1); border-radius: 14px; padding: 8px; ${PREVIEW_ELEMENT_SHADOW_CSS}`;
 
-// ------- XEmbed tray -------
-
-// XEmbed wrappers re-render only on these keys.
-export const XEMBED_STYLE_KEYS = Object.freeze([
-    'enable-custom-icon-style',
-    'icon-padding-vertical',
-    'icon-padding-horizontal',
-    'icon-border-radius',
-    'icon-background-color',
-    'icon-hover-background-color',
-    'icon-background-use-accent-color',
-    'icon-hover-background-use-accent-color',
-]);
-// Fallback when no custom overflow background is set, roughly matches the
-// shell panel background.
-export const XEMBED_BG_FALLBACK_HEX = '#36363A';
-
-
-// ------- Icon cache -------
-
-// XDG cache subdir under $XDG_CACHE_HOME for pixmap PNGs.
-export const ICON_CACHE_SUBDIR = 'bettertrayicons/icons';
-
-
-// ------- Process detection (Wine / Proton) -------
-
-// /proc/<pid>/cmdline basenames indicating a Wine launcher.
-export const WINE_LAUNCHER_BINARIES = new Set([
-    'wine', 'wine64',
-    'wine-preloader', 'wine64-preloader',
-    'wineserver', 'wineboot', 'winemenubuilder.exe',
-]);
-
-// wm_class Wine assigns under Steam and umu, used as the Proton indicator.
-// A real appid suffix only repeats what the env walk already yields, and
-// umu stamps the same placeholder on every app, so steam_app_* never
-// identifies an app.
-export const STEAM_APP_WMCLASS_RE = /^steam_app_/i;
-
-// Window classes that name the Wine build instead of the app, never usable
-// as app id, the launcher or prefix name wins over them. explorer.exe is
-// here because one explorer process owns every XEmbed tray window in a prefix.
-export const PLACEHOLDER_WMCLASS_RE = /^(steam_app_.*|steam_proton|explorer(\.exe)?)$/i;
-
-// GAMEID/UMU_ID values umu falls back to when no game id is configured.
-export const GENERIC_UMU_GAME_IDS = new Set(['umu-default', 'default', '0']);
-
-// Per-app env vars launchers stamp on their games, inherited by the
-// prefix's explorer.exe. Faugus sets FAUGUSID, Heroic HEROIC_APP_NAME,
-// Lutris GAME_NAME. Ordered by how specific they are.
-export const WINE_LAUNCHER_ENV_KEYS = Object.freeze(['FAUGUSID', 'HEROIC_APP_NAME', 'GAME_NAME']);
-
-export const PROC_WALK_MAX_DEPTH = 5;
-
-
-// ------- Geometry helpers -------
-
-// CSS shorthand order for reading 4-sided settings into {top, right, bottom, left}.
-export const BOX_SIDES = Object.freeze(['top', 'right', 'bottom', 'left']);
-
-
-// ------- Applications page -------
-
-// Wine and Proton icons render via XEmbed, so X11 surfaces can't be
-// snapshotted portably. Use a Wine glyph. Most distros only ship the
-// colored `wine` icon, hence the symbolic fallbacks.
-export const WINE_ICON_NAMES = Object.freeze([
-    'wine-symbolic',
-    'wine',
-    'application-x-ms-dos-executable-symbolic',
-    'applications-other-symbolic',
-]);
-
-// Generic IDs from before identifyApp picked stable process names.
-// The Applications page prunes leftovers matching these.
-export const LEGACY_ID_PATTERNS = Object.freeze([
-    /^chrome_status_icon_1$/,
-    /^_\d+_/,
-    /StatusNotifierItem/,
-]);
-
-
-// ------- Styling defaults -------
-
-export const DEFAULT_HOVER_BG_COLOR = 'rgba(255,255,255,0.1)';
-// St resolves this to the live system accent color and re-styles when the
-// accent changes, so an element using it tracks the accent on its own.
-export const ST_ACCENT_COLOR = '-st-accent-color';
-// Mirrors PopupAnimation.NONE. const.js is also loaded by the prefs
-// process, which can't import the shell's ui modules.
-export const POPUP_ANIMATION_NONE = 0;
-
-
-// ------- DBus menu parsing -------
-
-// Large menus would block the UI thread without periodic yields.
-export const DBUS_MENU_YIELD_EVERY_N_ITEMS = 20;
-
-
-// ------- Settings validation (sync import) -------
-
-// Colors feed inline set_style() strings, filter against CSS injection.
-export const COLOR_PATTERN = /^(#[0-9a-f]{3,8}|rgba?\(\s*[\d.,\s]+\s*\))$/i;
-
-// Bracket-assigning these would pollute Object.prototype via a sync file.
-export const RESERVED_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-
-// ------- Recommended toggle icons -------
-
-export const RECOMMENDED_TOGGLE_ICONS = [
-    'view-grid-symbolic',
-    'view-app-grid-symbolic',
-    'start-here-symbolic',
-    'preferences-desktop-apps-symbolic',
-    'pan-up-symbolic',
-    'pan-end-symbolic',
-    'pan-down-symbolic',
-    'pan-start-symbolic',
-    'go-up-symbolic',
-    'go-next-symbolic',
-    'go-down-symbolic',
-    'go-previous-symbolic',
-    'go-top-symbolic',
-    'go-bottom-symbolic',
-    'orientation-landscape-symbolic',
-    'orientation-portrait-right-symbolic',
-    'orientation-landscape-inverse-symbolic',
-    'orientation-portrait-left-symbolic',
-    'applications-other-symbolic',
-    'application-menu-symbolic',
-    'radio-symbolic',
-    'radio-checked-symbolic',
-    'software-update-available-symbolic',
-    'emoji-symbols-symbolic',
-    'weather-clear-symbolic',
-    'media-playback-start-symbolic',
-    'input-gaming-symbolic',
-    'org.gnome.Settings-symbolic',
-];
-
-// ------- About page -------
-
-// Contributor cards shown before a "Show more" card replaces the rest.
-export const MAX_CONTRIBUTORS = 5;
-
-// GitHub usernames (no leading "@") excluded from the About page contributor strip.
-// See CONTRIBUTING.md for the opt-out procedure.
+// See CONTRIBUTING.md and the wiki for the opt-out procedure.
 export const CONTRIBUTORS_OPTOUT = new Set([
     'github-actions[bot]',
     'dependabot[bot]',

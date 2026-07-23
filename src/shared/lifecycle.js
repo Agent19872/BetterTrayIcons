@@ -5,13 +5,14 @@ export const removeTimer = id => GLib.source_remove(id);
 export function disposeAll(target, method, ...props) {
     for (const prop of props) {
         if (target[prop]) {
-            target[prop][method]();
+            try {
+                target[prop][method]();
+            } catch { /* already disposed, or the teardown method threw */ }
             target[prop] = null;
         }
     }
 }
 
-// For timeout or signal ids.
 export function clearIds(target, remover, ...props) {
     for (const prop of props) {
         if (target[prop]) {
@@ -21,7 +22,19 @@ export function clearIds(target, remover, ...props) {
     }
 }
 
-// `method` defaults to 'disconnect'. Gio.DBusProxy uses 'disconnectSignal'.
+// The id lives on target[prop] so the owner's teardown can clear it like
+// any other timer.
+export function debounceTo(target, prop, delayMs, fn) {
+    if (target[prop])
+        GLib.source_remove(target[prop]);
+    target[prop] = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delayMs, () => {
+        target[prop] = 0;
+        fn();
+        return GLib.SOURCE_REMOVE;
+    });
+}
+
+// Gio.DBusProxy wants 'disconnectSignal' rather than 'disconnect'.
 export function disconnectSignal(target, source, prop, method = 'disconnect') {
     if (target[prop]) {
         try {
@@ -42,6 +55,17 @@ export function disconnectAll(target, source, prop, method = 'disconnect') {
         } catch { /* source disposed mid-loop */ }
     }
     target[prop] = [];
+}
+
+// Returned rather than connected, so each owner keeps its own guard and
+// id storage.
+export function ruleDispatcher(rules) {
+    return (_settings, key) => {
+        for (const rule of rules) {
+            if (rule.match(key))
+                rule.run();
+        }
+    };
 }
 
 // GTK4 fires no `destroy` on a mere unparent, so a plain connect on a

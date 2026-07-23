@@ -21,6 +21,18 @@
             </description>
         </key>
 
+        <key name="app-config-sync-meta" type="s">
+            <default>"{}"</default>
+            <summary>Sync metadata for app-configs: per-entry timestamps and tombstones (JSON)</summary>
+            <description>
+                Drives last-writer-wins merging on pull so no host loses an app
+                entry and a forget propagates. Structure: {
+                    "entries": { "app-id": { "m": 0, "h": "hash" } },
+                    "tombstones": { "app-id": 0 }
+                }
+            </description>
+        </key>
+
         <!-- Behaviour -->
         <key name="keep-popup-after-click" type="b">
             <default>false</default>
@@ -35,6 +47,16 @@
         <key name="enable-tooltips" type="b">
             <default>true</default>
             <summary>Show tooltips when hovering tray icons</summary>
+        </key>
+
+        <key name="hide-background-apps" type="b">
+            <default>false</default>
+            <summary>Hide GNOME's Background Apps entry from Quick Settings</summary>
+        </key>
+
+        <key name="enable-background-proxy" type="b">
+            <default>false</default>
+            <summary>Show a tray icon for windowless apps that register none themselves</summary>
         </key>
 
         <key name="enable-wine-support" type="b">
@@ -78,6 +100,36 @@
             <summary>Toggle button mirrors the tray icon style</summary>
         </key>
 
+        <key name="icon-padding-linked" type="b">
+            <default>false</default>
+            <summary>Link the four tray icon padding sides so editing one sets all</summary>
+        </key>
+
+        <key name="icon-margin-linked" type="b">
+            <default>false</default>
+            <summary>Link the four tray icon margin sides so editing one sets all</summary>
+        </key>
+
+        <key name="toggle-padding-linked" type="b">
+            <default>false</default>
+            <summary>Link the four toggle button padding sides so editing one sets all</summary>
+        </key>
+
+        <key name="toggle-margin-linked" type="b">
+            <default>false</default>
+            <summary>Link the four toggle button margin sides so editing one sets all</summary>
+        </key>
+
+        <key name="overflow-container-padding-linked" type="b">
+            <default>false</default>
+            <summary>Link the four overflow popup padding sides so editing one sets all</summary>
+        </key>
+
+        <key name="overflow-container-margin-linked" type="b">
+            <default>false</default>
+            <summary>Link the four overflow popup margin sides so editing one sets all</summary>
+        </key>
+
         <!-- Tray Icon Styling -->
         <key name="icon-color" type="s">
             <default>'#ffffff'</default>
@@ -85,7 +137,7 @@
         </key>
 
         <key name="icon-hover-color" type="s">
-            <default>'rgba(255, 255, 255, 0.1)'</default>
+            <default>'#ffffff'</default>
             <summary>Foreground colour for tray icons on hover</summary>
         </key>
 
@@ -134,13 +186,63 @@
         <key name="icon-padding-horizontal" type="i">
             <range min="0"/>
             <default>5</default>
-            <summary>Horizontal padding around each tray icon in pixels</summary>
+            <summary>Deprecated, replaced by icon-padding-{top,bottom,left,right}</summary>
+            <description>Kept only so a value a user set before the 2->4 key split can be migrated once on enable. Not read anywhere else.</description>
         </key>
 
         <key name="icon-padding-vertical" type="i">
             <range min="0"/>
             <default>5</default>
-            <summary>Vertical padding around each tray icon in pixels</summary>
+            <summary>Deprecated, replaced by icon-padding-{top,bottom,left,right}</summary>
+            <description>Kept only so a value a user set before the 2->4 key split can be migrated once on enable. Not read anywhere else.</description>
+        </key>
+
+        <key name="icon-padding-top" type="i">
+            <range min="0"/>
+            <default>5</default>
+            <summary>Top padding around each tray icon in pixels</summary>
+        </key>
+
+        <key name="icon-padding-bottom" type="i">
+            <range min="0"/>
+            <default>5</default>
+            <summary>Bottom padding around each tray icon in pixels</summary>
+        </key>
+
+        <key name="icon-padding-left" type="i">
+            <range min="0"/>
+            <default>5</default>
+            <summary>Left padding around each tray icon in pixels</summary>
+        </key>
+
+        <key name="icon-padding-right" type="i">
+            <range min="0"/>
+            <default>5</default>
+            <summary>Right padding around each tray icon in pixels</summary>
+        </key>
+
+        <key name="icon-margin-top" type="i">
+            <range min="0"/>
+            <default>0</default>
+            <summary>Top margin around each tray icon in pixels (custom style only)</summary>
+        </key>
+
+        <key name="icon-margin-bottom" type="i">
+            <range min="0"/>
+            <default>0</default>
+            <summary>Bottom margin around each tray icon in pixels (custom style only)</summary>
+        </key>
+
+        <key name="icon-margin-left" type="i">
+            <range min="0"/>
+            <default>0</default>
+            <summary>Left margin around each tray icon in pixels (custom style only)</summary>
+        </key>
+
+        <key name="icon-margin-right" type="i">
+            <range min="0"/>
+            <default>0</default>
+            <summary>Right margin around each tray icon in pixels (custom style only)</summary>
         </key>
 
         <!-- Limits & Layout -->
@@ -179,7 +281,7 @@
         </key>
 
         <key name="toggle-icon-name" type="s">
-            <default>'applications-other-symbolic'</default>
+            <default>'view-more-symbolic'</default>
             <summary>Icon displayed on the toggle button</summary>
         </key>
 
@@ -394,6 +496,21 @@
             <summary>Long right press action on tray icons</summary>
         </key>
 
+        <key name="tray-action-tap" type="s">
+            <default>'activate'</default>
+            <summary>Tap action on a tray icon</summary>
+        </key>
+
+        <key name="tray-action-tap-double" type="s">
+            <default>'nothing'</default>
+            <summary>Double tap action on a tray icon</summary>
+        </key>
+
+        <key name="tray-action-tap-long" type="s">
+            <default>'menu'</default>
+            <summary>Long touch action on a tray icon</summary>
+        </key>
+
         <!-- Actions: Toggle Button -->
         <key name="toggle-action-left" type="s">
             <default>'toggle'</default>
@@ -438,6 +555,26 @@
         <key name="toggle-action-right-long" type="s">
             <default>'nothing'</default>
             <summary>Long right press action on the toggle button</summary>
+        </key>
+
+        <key name="toggle-action-tap" type="s">
+            <default>'toggle'</default>
+            <summary>Tap action on the toggle button</summary>
+        </key>
+
+        <key name="toggle-action-tap-double" type="s">
+            <default>'nothing'</default>
+            <summary>Double tap action on the toggle button</summary>
+        </key>
+
+        <key name="toggle-action-tap-long" type="s">
+            <default>'action-menu'</default>
+            <summary>Long touch action on the toggle button</summary>
+        </key>
+
+        <key name="toggle-action-scroll" type="s">
+            <default>'nothing'</default>
+            <summary>Scroll action on the toggle button</summary>
         </key>
 
         <key name="toggle-hover-menu" type="s">

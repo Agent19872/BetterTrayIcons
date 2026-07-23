@@ -1,11 +1,57 @@
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
+import Pango from 'gi://Pango';
 import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {warn, error} from '../../shared/logging.js';
 import {clearIds, removeTimer} from '../../shared/lifecycle.js';
-import {isDisposed} from '../utils/actor.js';
+import {isDisposed, trackDisposal} from '../utils/actor.js';
+
+// Tray titles are app-provided and unbounded, so a long one would stretch
+// the tooltip across the panel and off the monitor.
+const TOOLTIP_MAX_WIDTH_PX = 400;
+
+// A failed tooltip is not fatal, the icon works without one.
+export function createTrayActor(label, settings) {
+    const actor = trackDisposal(new St.Bin({
+        reactive: true,
+        can_focus: true,
+        track_hover: true,
+        y_expand: true,
+        x_expand: false,
+        y_align: Clutter.ActorAlign.FILL,
+        x_align: Clutter.ActorAlign.CENTER,
+    }));
+
+    let tooltip = null;
+    try {
+        tooltip = new Tooltip(actor, settings);
+    } catch (e) {
+        warn(`Failed to create tooltip for ${label}: ${e.message}`);
+    }
+
+    return {actor, tooltip};
+}
+
+export function syncTooltip(actor, tooltip, settings) {
+    if (!tooltip)
+        return;
+    if (actor.hover && settings.get_boolean('enable-tooltips'))
+        tooltip.trigger();
+    else
+        tooltip.hide();
+}
+
+// The accessible name follows the tooltip switch so screen readers and the
+// tooltip announce the same thing, or nothing at all.
+export function applyTitle(actor, tooltip, settings, title) {
+    const show = settings.get_boolean('enable-tooltips');
+    if (actor)
+        actor.accessible_name = show && title ? title : '';
+    if (tooltip)
+        tooltip.text = title;
+}
 
 export class Tooltip {
     constructor(sourceActor, settings) {
@@ -19,6 +65,12 @@ export class Tooltip {
             visible: false,
             opacity: 0,
         });
+        // max-width caps a long title while a short label still shrinks to fit,
+        // which a fixed width would not, and ellipsizing needs that bound to
+        // have any effect.
+        this._label.set_style(`max-width: ${TOOLTIP_MAX_WIDTH_PX}px;`);
+        this._label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        trackDisposal(this._label);
 
         // uiGroup floats above panels and windows so the tooltip is never clipped.
         if (Main.layoutManager && Main.layoutManager.uiGroup)
@@ -79,14 +131,15 @@ export class Tooltip {
                 const maxX = monitor.x + monitor.width - labelWidth - spacing;
                 targetX = Math.max(minX, Math.min(targetX, maxX));
 
-                // Flip to the other side if the preferred position clips the monitor.
                 if (positionPref === 'bottom' && (targetY + labelHeight > monitor.y + monitor.height))
                     targetY = y - labelHeight - spacing;
                 else if (positionPref === 'top' && (targetY < monitor.y))
                     targetY = y + h + spacing;
             }
 
-            this._label.set_position(targetX, targetY);
+            // Fractional positions land the glyphs on half pixels and blur
+            // some tooltips while others stay sharp.
+            this._label.set_position(Math.round(targetX), Math.round(targetY));
             this._label.show();
             this._label.ease({
                 opacity: 255,
