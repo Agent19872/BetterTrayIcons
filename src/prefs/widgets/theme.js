@@ -1,30 +1,24 @@
-import Gdk from 'gi://Gdk';
 import Adw from 'gi://Adw';
-import GdkPixbuf from 'gi://GdkPixbuf';
 
-import {warn} from '../../shared/logging.js';
+import {createTextureFromBytes} from './gtkHelpers.js';
 
-// Without a `lightFile` the dark SVG's white strokes are inverted to black.
-export function bindLogoToTheme(logo, fallback, assetsDir, darkFile, lightFile = null) {
-    const cache = {dark: null, light: null};
+export function bindLogoToTheme(logo, fallback, assetsDir, darkFile) {
+    let darkSvg = null;
 
     return _bindToStyleManager(() => {
         const isDark = Adw.StyleManager.get_default().dark;
 
-        let svgStr = null;
-        if (!isDark && lightFile) {
-            cache.light ??= _readSvgString(assetsDir, lightFile);
-            svgStr = cache.light;
-        }
-        if (!svgStr) {
-            cache.dark ??= _readSvgString(assetsDir, darkFile);
-            svgStr = cache.dark;
-            if (svgStr && !isDark)
-                svgStr = _recolorWhiteToBlack(svgStr, {strict: true});
-        }
+        darkSvg ??= _readSvgString(assetsDir, darkFile);
+        let svgStr = darkSvg;
+        if (svgStr && !isDark)
+            svgStr = _recolorWhiteToBlack(svgStr);
 
-        if (svgStr) {
-            logo.set_paintable(Gdk.Texture.new_for_pixbuf(_svgToPixbuf(svgStr)));
+        const texture = svgStr
+            ? createTextureFromBytes(new TextEncoder().encode(svgStr))
+            : null;
+
+        if (texture) {
+            logo.set_paintable(texture);
             logo.visible = true;
             if (fallback)
                 fallback.visible = false;
@@ -36,38 +30,6 @@ export function bindLogoToTheme(logo, fallback, assetsDir, darkFile, lightFile =
     });
 }
 
-// Like bindLogoToTheme but for non-logo icons that need pixel-exact sizing.
-// One read plus one render per mode, theme flips just swap textures.
-export function bindSvgIconToTheme(image, assetsDir, filename, size = 0) {
-    let rawSvg;
-    const textures = {dark: null, light: null};
-
-    return _bindToStyleManager(() => {
-        if (rawSvg === undefined) {
-            rawSvg = _readSvgString(assetsDir, filename);
-            if (!rawSvg)
-                warn(`Icon file not found: ${assetsDir.get_child(filename).get_path()}`);
-        }
-        if (!rawSvg)
-            return;
-
-        const mode = Adw.StyleManager.get_default().dark ? 'dark' : 'light';
-        if (!textures[mode]) {
-            const svgStr = mode === 'dark' ? rawSvg : _recolorWhiteToBlack(rawSvg);
-            let pixbuf = _svgToPixbuf(svgStr);
-            if (pixbuf && size > 0)
-                pixbuf = pixbuf.scale_simple(size, size, GdkPixbuf.InterpType.BILINEAR);
-            if (!pixbuf)
-                return;
-            textures[mode] = Gdk.Texture.new_for_pixbuf(pixbuf);
-        }
-
-        image.set_paintable(textures[mode]);
-        if (size > 0)
-            image.set_size_request(size, size);
-        image.visible = true;
-    });
-}
 
 function _bindToStyleManager(update) {
     const styleManager = Adw.StyleManager.get_default();
@@ -84,25 +46,12 @@ function _readSvgString(assetsDir, filename) {
     return success ? new TextDecoder().decode(contents) : null;
 }
 
-// Light theme needs dark strokes/fills, so white is rewritten to black.
-function _recolorWhiteToBlack(svgStr, {strict = false} = {}) {
-    if (strict) {
-        // Logo path: only rewrite stroke="white" forms, leaves fill colors alone.
-        return svgStr
-            .replaceAll('stroke="white"', 'stroke="black"')
-            .replaceAll('stroke:white', 'stroke:black')
-            .replaceAll('stroke="#FFF"', 'stroke="#000"');
-    }
+// Light theme needs dark strokes. Only the stroke forms though, the logo's
+// fill colors have to survive.
+function _recolorWhiteToBlack(svgStr) {
     return svgStr
-        .replace(/fill=["']?#fff(fff)?["']?/gi, 'fill="#000000"')
-        .replace(/fill=["']?white["']?/gi, 'fill="#000000"')
-        .replace(/stroke=["']?#fff(fff)?["']?/gi, 'stroke="#000000"')
-        .replace(/stroke=["']?white["']?/gi, 'stroke="#000000"');
+        .replaceAll('stroke="white"', 'stroke="black"')
+        .replaceAll('stroke:white', 'stroke:black')
+        .replaceAll('stroke="#FFF"', 'stroke="#000"');
 }
 
-function _svgToPixbuf(svgStr) {
-    const loader = new GdkPixbuf.PixbufLoader();
-    loader.write(new TextEncoder().encode(svgStr));
-    loader.close();
-    return loader.get_pixbuf();
-}

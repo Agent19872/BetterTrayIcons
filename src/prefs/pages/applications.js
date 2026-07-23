@@ -1,51 +1,90 @@
 import Adw from 'gi://Adw';
-import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
+import Gtk from 'gi://Gtk';
 import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-import {getAppConfigs, deleteAppConfig, formatAppName} from '../../shared/appConfig.js';
-import {connectScoped, clearIds, removeTimer} from '../../shared/lifecycle.js';
-import {resolveIcon} from '../../shared/icon.js';
+import {getAppConfigs, deleteAppConfig, resetAllAppConfigs, displayAppName} from '../../shared/appConfig.js';
+import {connectScoped, clearIds, debounceTo, removeTimer} from '../../shared/lifecycle.js';
+import {resolveIcon, probeIconPaths, themeProbeKey} from '../../shared/icon.js';
 import AppDialog from '../dialogs/appDialog.js';
-import {createButton, createIconButton, createImage, applyResolvedIcon, attachBadge} from '../widgets/gtkHelpers.js';
-import {createActionRow} from '../widgets/rows.js';
-import {WINE_ICON_NAMES, LEGACY_ID_PATTERNS, PAGE_REBUILD_DEBOUNCE_MS} from '../../const.js';
+import {createButton, createIconButton, createImage, applyResolvedIcon, hasThemeIcon} from '../widgets/gtkHelpers.js';
+import {createActionRow, NEXT_ICON_NAME} from '../widgets/rows.js';
+import {addToast} from '../widgets/sidebar.js';
+import {showConfirmationDialog} from '../dialogs/dialogs.js';
+
+const PAGE_REBUILD_DEBOUNCE_MS = 100;
+
+// Product names, so nothing to translate. Shown behind the app's own title,
+// which is identical across builds and would otherwise list three times.
+const PACKAGING_LABELS = Object.freeze({
+    snap: 'Snap',
+    flatpak: 'Flatpak',
+    appimage: 'AppImage',
+});
+
+// Generic IDs from before identifyApp picked stable process names.
+const LEGACY_ID_PATTERNS = Object.freeze([
+    /^chrome_status_icon_\d+$/,
+    /^_\d+_/,
+    /StatusNotifierItem/,
+    /^xembed-\d+$/,
+]);
 
 export class ApplicationsPage extends Adw.PreferencesPage {
     static {
-        GObject.registerClass(this);
+        GObject.registerClass({GTypeName: 'BetterTrayIconsApplicationsPage'}, this);
     }
 
     _init(window, settings) {
         super._init({
             title: _('Applications'),
-            icon_name: 'view-app-grid-symbolic',
+            icon_name: 'bti-apps-symbolic',
         });
 
         this._window = window;
         this._settings = settings;
         this._appsGroup = null;
         this._rebuildTimeoutId = 0;
+        this._buildGen = 0;
 
+        this._headerActions = null;
         this._buildUI();
 
         // One edit can fire several app-configs writes in a row (rename
         // debounce, priority spinner, detection updates from the shell).
-        // Coalesce them into a single rebuild.
-        connectScoped(this, this._settings, 'changed::app-configs', () => {
-            clearIds(this, removeTimer, '_rebuildTimeoutId');
-            this._rebuildTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, PAGE_REBUILD_DEBOUNCE_MS, () => {
-                this._rebuildTimeoutId = 0;
-                this._buildUI();
-                return GLib.SOURCE_REMOVE;
-            });
-        });
-
-        this.connect('destroy', () => clearIds(this, removeTimer, '_rebuildTimeoutId'));
+        const queueRebuild = () =>
+            debounceTo(this, '_rebuildTimeoutId', PAGE_REBUILD_DEBOUNCE_MS, () => this._buildUI());
+        connectScoped(this, this._settings, 'changed::app-configs', queueRebuild);
+        // The rows read this once while building, so without a rebuild they
+        // keep whichever variant was current when the page was opened.
+        connectScoped(this, this._settings, 'changed::enable-symbolic-icons', queueRebuild);
     }
 
+    get headerActions() {
+        this._headerActions ??= this._buildHeaderActions();
+        return this._headerActions;
+    }
+
+    // Probing before the teardown leaves the current list up on a slow mount
+    // instead of an empty page. Dispose bumps the generation counter below
+    // to drop an overtaken probe instead of rendering into a dead page.
     _buildUI() {
+        const gen = ++this._buildGen;
+        const apps = getAppConfigs(this._settings);
+        // Sorting on the displayed name stops a custom title from landing
+        // the row somewhere else than the list order suggests.
+        apps.sort((a, b) => displayAppName(a, a.id)
+            .localeCompare(displayAppName(b, b.id), undefined, {sensitivity: 'base'}));
+
+        probeIconPaths(apps).then(iconPaths => {
+            if (gen === this._buildGen)
+                this._renderApps(apps, iconPaths);
+        });
+    }
+
+    _renderApps(apps, iconPaths) {
+        this._iconPaths = iconPaths;
         if (this._appsGroup) {
             this.remove(this._appsGroup);
             this._appsGroup = null;
@@ -57,56 +96,54 @@ export class ApplicationsPage extends Adw.PreferencesPage {
         });
         this.add(this._appsGroup);
 
-        const apps = getAppConfigs(this._settings);
-
         if (apps.length === 0) {
             this._appsGroup.add(createActionRow(_('No apps detected'),
                 _('Run an app with a tray icon to see it here.'),
-                {prefixIcon: 'system-search-symbolic'}));
+                {prefixIcon: 'bti-search-symbolic'}));
             return;
         }
-
-        apps.sort((a, b) => (a.title || a.id).toLowerCase().localeCompare((b.title || b.id).toLowerCase()));
 
         const useSymbolic = this._settings.get_boolean('enable-symbolic-icons');
 
         apps.forEach(app => {
-            const displayName = formatAppName(app.custom_title || app.title || app.id);
+            const displayName = displayAppName(app, app.id);
 
-            const row = new Adw.ActionRow({
-                title: displayName || _('Unknown App'),
-                subtitle: `ID: ${app.id}`,
-                activatable: true,
-            });
-
+            // These render through XEmbed, whose X11 surface the prefs cannot
+            // snapshot, so the list shows a flavor glyph instead of the real icon.
             const iconImage = createImage({pixel_size: 32});
-            if (app.is_wine || app.is_proton) {
-                iconImage.set_from_gicon(new Gio.ThemedIcon({
-                    names: WINE_ICON_NAMES,
-                    use_default_fallbacks: true,
-                }));
+            if (app.is_proton) {
+                iconImage.set_from_icon_name('bti-proton-symbolic');
+            } else if (app.is_wine) {
+                iconImage.set_from_icon_name('bti-wine-symbolic');
             } else {
-                applyResolvedIcon(iconImage, resolveIcon(app), useSymbolic);
+                const themeKey = themeProbeKey(app);
+                const resolved = resolveIcon(app, hasThemeIcon,
+                    iconPaths.get(app.cached_icon_path),
+                    themeKey ? iconPaths.get(themeKey) ?? null : null);
+                applyResolvedIcon(iconImage, resolved, useSymbolic, iconPaths);
             }
 
-            row.add_prefix(iconImage);
-
+            let flavor = PACKAGING_LABELS[app.packaging] ?? null;
             if (app.is_proton)
-                attachBadge(row, _('Proton'), {variant: 'info'});
+                flavor = _('Proton');
             else if (app.is_wine)
-                attachBadge(row, _('Wine'), {variant: 'info'});
+                flavor = _('Wine');
 
-            if (app.is_hidden) {
-                row.add_suffix(createIconButton('low-vision-symbolic', {
-                    tooltip_text: _('Hidden'),
-                    sensitive: false,
-                }));
-            }
+            const hiddenMark = app.is_hidden
+                ? [createIconButton('bti-hidden-symbolic', {tooltip_text: _('Hidden'), sensitive: false})]
+                : [];
 
-            row.add_suffix(createImage({icon_name: 'go-next-symbolic'}));
+            const badges = flavor ? [{text: flavor, variant: 'info'}] : [];
+            if (app.is_background_proxy)
+                badges.push({text: _('Background App'), variant: 'info'});
 
-            row.connect('activated', () => this._openAppConfiguration(app));
-            this._appsGroup.add(row);
+            this._appsGroup.add(createActionRow(displayName || _('Unknown App'), `${_('ID')}: ${app.id}`, {
+                prefixWidget: iconImage,
+                badge: badges,
+                suffixWidgets: hiddenMark,
+                suffixIcon: NEXT_ICON_NAME,
+                onActivate: () => this._openAppConfiguration(app),
+            }));
         });
 
         const hasLegacy = apps.some(a => isLegacyAppId(a.id));
@@ -125,18 +162,94 @@ export class ApplicationsPage extends Adw.PreferencesPage {
     }
 
     _openAppConfiguration(appData) {
-        const dialog = new AppDialog(this._settings, appData.id, appData);
+        const dialog = new AppDialog(this._settings, appData.id, appData, this._iconPaths, {
+            onForget: () => addToast(this._window, new Adw.Toast({title: _('App forgotten')})),
+        });
         dialog.present(this._window);
     }
 
     _cleanupLegacyIds(apps) {
-        apps.forEach(app => {
-            if (isLegacyAppId(app.id))
-                deleteAppConfig(this._settings, app.id);
-        });
+        _deleteAppConfigsStaggered(this._settings, apps.filter(a => isLegacyAppId(a.id)).map(a => a.id));
+    }
+
+    _buildHeaderActions() {
+        const box = new Gtk.Box({spacing: 6});
+        box.append(createIconButton('bti-trash-symbolic', {
+            tooltip_text: _('Forget All Apps'),
+            callback: () => this._confirmForgetAll(),
+        }));
+        box.append(createIconButton('bti-reset-symbolic', {
+            circular: false,
+            tooltip_text: _('Reset All Apps'),
+            callback: () => this._confirmResetAll(),
+        }));
+        return box;
+    }
+
+    _confirmForgetAll() {
+        showConfirmationDialog(
+            this._window,
+            _('Forget all apps?'),
+            _('Deletes all stored settings for every detected app. Running apps are re-detected right away.'),
+            () => this._forgetAll(),
+            _('Forget All'),
+            true
+        );
+    }
+
+    _forgetAll() {
+        const ids = getAppConfigs(this._settings).map(app => app.id);
+        _deleteAppConfigsStaggered(this._settings, ids, () =>
+            addToast(this._window, new Adw.Toast({title: _('All apps forgotten')})));
+    }
+
+    _confirmResetAll() {
+        showConfirmationDialog(
+            this._window,
+            _('Reset all apps?'),
+            _('Restores name, icon and status icons to defaults for every detected app. Their order is kept.'),
+            () => this._resetAll(),
+            _('Reset All'),
+            true
+        );
+    }
+
+    _resetAll() {
+        resetAllAppConfigs(this._settings);
+        addToast(this._window, new Adw.Toast({title: _('All apps reset')}));
+    }
+
+    vfunc_dispose() {
+        this._buildGen++;
+        clearIds(this, removeTimer, '_rebuildTimeoutId');
+        super.vfunc_dispose();
     }
 }
 
 function isLegacyAppId(id) {
     return LEGACY_ID_PATTERNS.some(rx => rx.test(id));
 }
+
+// A forgotten app that's still running only gets its cached icon rewritten
+// once the shell re-resolves it, and that takes several awaited D-Bus round
+// trips (Status, IconName, IconThemePath, IconPixmap). A one-tick idle_add
+// stagger wasn't enough room for that chain to land before the next
+// deletion's own app-configs write raced it: measured live, the loser kept
+// a cached_icon_path pointing at a file its own snapshot write never
+// finished (reproduced repeatedly with OpenRGB, a pixmap-icon app). This
+// wait is deliberately longer than that chain typically needs.
+const APP_FORGET_STAGGER_MS = 500;
+
+function _deleteAppConfigsStaggered(settings, appIds, onComplete) {
+    const [next, ...rest] = appIds;
+    if (!next) {
+        onComplete?.();
+        return;
+    }
+    deleteAppConfig(settings, next);
+    GLib.timeout_add(GLib.PRIORITY_DEFAULT, APP_FORGET_STAGGER_MS, () => {
+        _deleteAppConfigsStaggered(settings, rest, onComplete);
+        return GLib.SOURCE_REMOVE;
+    });
+}
+

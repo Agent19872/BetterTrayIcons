@@ -1,32 +1,58 @@
 import Adw from 'gi://Adw';
-import Gio from 'gi://Gio';
 import GObject from 'gi://GObject';
 import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 import {error} from '../../shared/logging.js';
-import {saveSettingsToFile, loadSettingsFromFile, deleteBackups} from '../../shared/settingsIO.js';
+import {saveSettingsToFile, loadSettingsFromFile, deleteBackups, resetKeys} from '../../shared/settingsIO.js';
 import {createButton, createIconButton, createFileFilter} from '../widgets/gtkHelpers.js';
-import {createSwitchRow, createSpinRow, createComboRow, createActionRow, bindVisibility} from '../widgets/rows.js';
+import {createSwitchRow, createSpinRow, createSegmentedRow, createActionRow, createComplexSwitchRow, createResetButton} from '../widgets/rows.js';
+import {addToast} from '../widgets/sidebar.js';
 import {showConfirmationDialog, openFileChooser} from '../dialogs/dialogs.js';
 import {openSyncDialog} from '../dialogs/syncDialog.js';
+import ConfigDialog from '../dialogs/configDialog.js';
+
+// The header reset covers only this page, unlike the factory reset below
+// it. The sync wiring (sync-file-path, enable-auto-sync, max-backups)
+// survives, same as on import: resetting it would silently detach a
+// running sync.
+const GENERAL_RESET_KEYS = Object.freeze([
+    'enable-wine-support',
+    'keep-popup-after-click',
+    'hide-background-apps',
+    'enable-background-proxy',
+    'enable-tooltips',
+    'tooltip-position',
+    'tooltip-delay',
+    'tray-position',
+    'tray-order',
+    'visible-icon-limit',
+]);
 
 export class GeneralPage extends Adw.PreferencesPage {
     static {
-        GObject.registerClass(this);
+        GObject.registerClass({GTypeName: 'BetterTrayIconsGeneralPage'}, this);
     }
 
-    _init(settings) {
+    _init(window, settings) {
         super._init({
             title: _('General'),
-            icon_name: 'preferences-system-symbolic',
+            icon_name: 'bti-general-symbolic',
         });
 
+        this._window = window;
         this._settings = settings;
+        this._headerActions = null;
 
         this._createBehaviorGroup();
-        this._createLayoutGroup();
+        this._createPlacementGroup();
         this._createAdvancedGroup();
         this._createDangerZoneGroup();
+    }
+
+    get headerActions() {
+        this._headerActions ??= createResetButton(this._settings, GENERAL_RESET_KEYS,
+            {window: this._window, includesSubpages: true});
+        return this._headerActions;
     }
 
     _createBehaviorGroup() {
@@ -42,90 +68,89 @@ export class GeneralPage extends Adw.PreferencesPage {
 
         group.add(createSwitchRow(
             _('Keep Overflow Menu Open'),
-            _('Menu items still close immediately on click.'),
+            _('Stays open after icon clicks and context menus alike.'),
             this._settings,
             'keep-popup-after-click'
         ));
 
-        group.add(createSwitchRow(
+        group.add(createComplexSwitchRow(
+            _('Hide Background Apps'),
+            _("Removes GNOME's own list of windowless apps from Quick Settings."),
+            this._settings,
+            'hide-background-apps',
+            this._window,
+            ConfigDialog,
+            {
+                pageTitle: _('Background Apps'),
+                groups: [{
+                    configs: [{
+                        type: 'switch',
+                        title: _('Create Tray Icons for Background Apps'),
+                        subtitle: _('Adds a tray icon for windowless background apps that lack one of their own.'),
+                        key: 'enable-background-proxy',
+                    }],
+                }],
+            }
+        ));
+
+        group.add(createComplexSwitchRow(
             _('Show Tooltips'),
             _('Show the app title on hover.'),
             this._settings,
-            'enable-tooltips'
+            'enable-tooltips',
+            this._window,
+            ConfigDialog,
+            {
+                pageTitle: _('Tooltips'),
+                groups: [{
+                    configs: [
+                        {
+                            type: 'segmented',
+                            title: _('Position'),
+                            key: 'tooltip-position',
+                            options: [_('Top'), _('Bottom')],
+                            values: ['top', 'bottom'],
+                        },
+                        {
+                            type: 'spin',
+                            title: _('Delay (ms)'),
+                            key: 'tooltip-delay',
+                            min: 0, max: 5000, step: 50,
+                        },
+                    ],
+                }],
+            }
         ));
-
-        const positionRow = createComboRow(
-            _('Tooltip Position'),
-            null,
-            this._settings,
-            'tooltip-position',
-            [_('Top'), _('Bottom')],
-            ['top', 'bottom']
-        );
-
-        const delayRow = createSpinRow(
-            _('Tooltip Delay (ms)'),
-            this._settings,
-            'tooltip-delay',
-            0, 5000, 50
-        );
-        this._settings.bind('enable-tooltips', positionRow, 'visible', Gio.SettingsBindFlags.GET);
-        this._settings.bind('enable-tooltips', delayRow, 'visible', Gio.SettingsBindFlags.GET);
-        group.add(positionRow);
-        group.add(delayRow);
     }
 
-    _createLayoutGroup() {
-        const group = new Adw.PreferencesGroup({title: _('Layout')});
+    _createPlacementGroup() {
+        const group = new Adw.PreferencesGroup({title: _('Placement')});
         this.add(group);
 
-        group.add(createComboRow(
+        group.add(createSegmentedRow(
             _('Panel Box'),
-            _('Where icons appear in the top panel.'),
+            _('Which part of the panel holds the icons.'),
             this._settings,
             'tray-position',
-            [_('Right'), _('Center'), _('Left')],
-            ['right', 'center', 'left']
+            [_('Left'), _('Center'), _('Right')],
+            ['left', 'center', 'right']
         ));
 
         group.add(createSpinRow(
             _('Position in Box'),
             this._settings,
             'tray-order',
-            0, 20, 1
+            0, 20, 1,
+            {subtitle: _('Order within the chosen box.')}
         ));
 
         group.add(createSpinRow(
             _('Visible Icons'),
             this._settings,
             'visible-icon-limit',
-            0, 20, 1
+            0, 20, 1,
+            {subtitle: _('How many icons stay in the panel. Extra icons move to the overflow menu, and 0 moves them all.')}
         ));
-
-        const modeRow = createComboRow(
-            _('Overflow Layout'),
-            null,
-            this._settings,
-            'overflow-layout-mode',
-            [_('Grid'), _('Row')],
-            ['grid', 'row']
-        );
-        group.add(modeRow);
-
-        const colLimitRow = createSpinRow(
-            _('Grid Columns'),
-            this._settings,
-            'grid-column-limit',
-            1, 10, 1
-        );
-        group.add(colLimitRow);
-
-        bindVisibility(
-            this._settings,
-            'overflow-layout-mode',
-            colLimitRow,
-            'grid'
-        );
     }
 
     _createAdvancedGroup() {
@@ -134,11 +159,11 @@ export class GeneralPage extends Adw.PreferencesPage {
         });
         this.add(group);
 
-        const importBtn = createIconButton('document-open-symbolic', {
+        const importBtn = createIconButton('bti-import-symbolic', {
             tooltip_text: _('Import'),
             callback: () => this._handleImport(),
         });
-        const exportBtn = createIconButton('document-save-symbolic', {
+        const exportBtn = createIconButton('bti-export-symbolic', {
             tooltip_text: _('Export'),
             callback: () => this._handleExport(),
         });
@@ -146,7 +171,7 @@ export class GeneralPage extends Adw.PreferencesPage {
             suffixWidgets: [importBtn, exportBtn],
         }));
         group.add(createActionRow(_('Cloud Sync'), _('Keep settings in sync via a shared file.'), {
-            headerSuffix: createIconButton('emblem-synchronizing-symbolic', {
+            headerSuffix: createIconButton('bti-sync-symbolic', {
                 flat: false,
                 tooltip_text: _('Configure'),
                 callback: () => this._openSyncDialog(),
@@ -222,7 +247,7 @@ export class GeneralPage extends Adw.PreferencesPage {
     }
 
     _openJsonFileChooser(callback, saveMode) {
-        const filter = createFileFilter('JSON Files', ['*.json']);
+        const filter = createFileFilter(_('JSON Files'), ['*.json']);
 
         openFileChooser(this.get_root(), {
             title: saveMode ? _('Export') : _('Import'),
@@ -234,22 +259,14 @@ export class GeneralPage extends Adw.PreferencesPage {
     }
 
     _performFactoryReset() {
-        // Capture the path before resetting, because reset clears it.
+        // Capture the path before the reset clears it.
         const syncPath = this._settings.get_string('sync-file-path');
 
-        // A scratch instance in delay mode turns the reset into one dconf
-        // transaction. delay() on the shared instance would leave it
-        // delayed for good.
-        const batch = new Gio.Settings({settings_schema: this._settings.settings_schema});
-        batch.delay();
-        batch.list_keys().forEach(key => batch.reset(key));
-        batch.apply();
+        resetKeys(this._settings, this._settings.list_keys());
 
         if (syncPath)
             deleteBackups(syncPath);
 
-        const root = this.get_root();
-        if (root && root.add_toast)
-            root.add_toast(new Adw.Toast({title: _('Settings reset')}));
+        addToast(this.get_root(), new Adw.Toast({title: _('Settings reset')}));
     }
 }

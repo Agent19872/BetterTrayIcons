@@ -1,17 +1,31 @@
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
+import Meta from 'gi://Meta';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
-import {error, warn} from './src/shared/logging.js';
-import {readFileBytes} from './src/shared/fetch.js';
-import {importSettingsFromJSON, probeImportIconPaths, saveSettingsToFile} from './src/shared/settingsIO.js';
-import {clearIds, disconnectSignal, disconnectAll, disposeAll, removeTimer} from './src/shared/lifecycle.js';
+import {error, warn, clearWarnedOnce} from './src/shared/logging.js';
+import {readFileText, isCancelledError} from './src/shared/fetch.js';
+import {importSettingsFromJSON, probeImportIconPaths, saveSettingsToFile, isOwnSyncSource} from './src/shared/settingsIO.js';
+import {clearIds, debounceTo, disconnectSignal, disconnectAll, disposeAll, removeTimer} from './src/shared/lifecycle.js';
+import {clearSeenCache, userConfigSignature} from './src/shared/appConfig.js';
 import {placeIndicatorInPanel} from './src/shell/utils/actor.js';
+import {clearIconCaches} from './src/shell/utils/icons.js';
+import {enableLauncherEntries, disableLauncherEntries} from './src/shell/utils/launcherEntries.js';
+import {clearItemSplits} from './src/shell/utils/itemSplit.js';
 
-import {PanelIndicator} from './src/shell/panelIndicator.js';
-import {SniWatcher} from './src/shell/sniWatcher.js';
-import {XEmbedTrayBridge} from './src/shell/xembedBridge.js';
-import {AUTO_SYNC_DEBOUNCE_MS, AUTO_PUSH_DEBOUNCE_MS} from './src/const.js';
+import {PanelIndicator} from './src/shell/panel/panelIndicator.js';
+import {SniWatcher} from './src/shell/sni/sniWatcher.js';
+import {XEmbedTrayBridge} from './src/shell/xembed/xembedBridge.js';
+import {BackgroundApps} from './src/shell/features/backgroundApps.js';
+import {BackgroundAppsProxyWatcher} from './src/shell/backgroundAppsProxy/backgroundAppsProxyWatcher.js';
+
+// Prevents reading a sync file mid-write.
+const AUTO_SYNC_DEBOUNCE_MS = 1000;
+
+const AUTO_PUSH_DEBOUNCE_MS = 2000;
+
+const PREFS_WM_CLASS = 'org.gnome.Shell.Extensions';
 
 export default class BetterTrayIconsExtension extends Extension {
     enable() {
@@ -29,6 +43,7 @@ export default class BetterTrayIconsExtension extends Extension {
     _realEnable() {
         try {
             this._settings = this.getSettings();
+            _migrateTrayIconPadding(this._settings);
 
             this._settingsSignals = [];
 
@@ -46,16 +61,39 @@ export default class BetterTrayIconsExtension extends Extension {
                 placeIndicatorInPanel(this._indicator, this._settings);
             });
 
+            enableLauncherEntries();
+
             this._manager = new SniWatcher(this.dir, this._indicator, this._settings);
             this._manager.enable();
 
-            // XEmbed bridge for legacy tray icons (Wine, classic X11).
             // The bridge gates itself on `enable-wine-support`.
             this._xembedBridge = new XEmbedTrayBridge(this._settings, this._indicator);
             this._xembedBridge.enable();
+
+            this._backgroundApps = new BackgroundApps(this._settings);
+            this._backgroundApps.enable();
+
+            // The watcher gates itself on `hide-background-apps` plus
+            // `enable-background-proxy`.
+            this._backgroundAppsProxyWatcher = new BackgroundAppsProxyWatcher(this._settings, this._indicator);
+            this._backgroundAppsProxyWatcher.enable();
         } catch (e) {
             error(`Fatal Error during enable: ${e.message}`, e);
         }
+    }
+
+    // The service throws 'Already showing a prefs dialog' on a second call and
+    // the shell fires that call without a reply handler, so triggering the
+    // action again while the window was open did nothing at all. Every
+    // extension's dialog shares one wm_class and carries no app id, which
+    // leaves the title as the only thing naming the owner.
+    openPreferences() {
+        const open = global.display.get_tab_list(Meta.TabList.NORMAL_ALL, null)
+            .find(w => w.get_wm_class() === PREFS_WM_CLASS && w.get_title() === this.metadata.name);
+        if (open)
+            Main.activateWindow(open);
+        else
+            super.openPreferences();
     }
 
     _setupAutoSync() {
@@ -63,10 +101,8 @@ export default class BetterTrayIconsExtension extends Extension {
         disposeAll(this, 'cancel', '_fileMonitor', '_syncCancellable');
         clearIds(this, removeTimer, '_syncDebounceId');
 
-        const enabled = this._settings.get_boolean('enable-auto-sync');
-        const path = this._settings.get_string('sync-file-path');
-
-        if (!enabled || !path)
+        const path = this._syncTarget();
+        if (!path)
             return;
 
         try {
@@ -82,44 +118,45 @@ export default class BetterTrayIconsExtension extends Extension {
     }
 
     _queueSyncImport(file) {
-        clearIds(this, removeTimer, '_syncDebounceId');
-
-        // Debounce so the read happens after the writer is done, not mid-write.
-        this._syncDebounceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, AUTO_SYNC_DEBOUNCE_MS, () => {
-            this._syncDebounceId = 0;
-
+        debounceTo(this, '_syncDebounceId', AUTO_SYNC_DEBOUNCE_MS, () => {
             // Cancellable lets disable() abort the read before it touches
             // a nulled `this._settings`.
             disposeAll(this, 'cancel', '_syncCancellable');
             this._syncCancellable = new Gio.Cancellable();
 
-            readFileBytes(file, this._syncCancellable).then(async contents => {
+            readFileText(file, this._syncCancellable).then(async text => {
                 if (!this._settings)
                     return;
-                const data = JSON.parse(new TextDecoder().decode(contents));
+                const data = JSON.parse(text);
 
                 // Skip changes this host wrote itself to avoid sync loops.
-                if (data._meta && data._meta.source === GLib.get_host_name())
+                if (isOwnSyncSource(data._meta))
                     return;
 
-                // Probe the paths before the flag goes up, off the main loop.
+                // Probe the icon paths before the flag goes up. They can sit on
+                // a network mount, and this runs on the shell's main loop.
                 const iconPaths = await probeImportIconPaths(data, this._syncCancellable);
                 if (!this._settings)
                     return;
 
-                // The in-process change echo arrives synchronously inside
-                // apply(), so the flag spans exactly the import's own writes.
+                // The flag covers import echoes delivered inside apply().
+                // A time window instead would also swallow whatever the
+                // user changed while it was open.
                 this._importing = true;
                 try {
-                    importSettingsFromJSON(this._settings, data, iconPaths);
+                    importSettingsFromJSON(this._settings, data, iconPaths, {merge: true});
                 } finally {
                     this._importing = false;
                 }
+                // Measured in the live shell the change echo can also land
+                // after the flag drops. Re-stamp by hand, or the next
+                // app-configs write counts the imported changes as the
+                // user's and pushes a file we just read.
+                this._lastUserConfig = userConfigSignature(this._settings);
             }).catch(e => {
-                if (!e?.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                if (!isCancelledError(e))
                     warn(`Auto-sync import failed: ${e.message}`);
             });
-            return GLib.SOURCE_REMOVE;
         });
     }
 
@@ -127,25 +164,40 @@ export default class BetterTrayIconsExtension extends Extension {
         disconnectSignal(this, this._settings, '_autoPushSignalId');
         clearIds(this, removeTimer, '_autoPushDebounceId');
 
-        const enabled = this._settings.get_boolean('enable-auto-sync');
-        const path = this._settings.get_string('sync-file-path');
-        if (!enabled || !path)
+        if (!this._syncTarget())
             return;
+
+        this._lastUserConfig = userConfigSignature(this._settings);
 
         this._autoPushSignalId = this._settings.connect('changed', (_s, key) => {
             if (key === 'sync-file-path' || key === 'enable-auto-sync')
                 return;
             if (this._importing)
                 return;
+            // The sync metadata moves in lockstep with app-configs, so a
+            // metadata-only write (a tombstone pruned on migration) must not
+            // push on its own.
+            if ((key === 'app-configs' || key === 'app-config-sync-meta') && !this._userConfigMoved())
+                return;
 
-            clearIds(this, removeTimer, '_autoPushDebounceId');
-            this._autoPushDebounceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, AUTO_PUSH_DEBOUNCE_MS, () => {
-                this._autoPushDebounceId = 0;
+            debounceTo(this, '_autoPushDebounceId', AUTO_PUSH_DEBOUNCE_MS, () => {
                 saveSettingsToFile(this._settings, this._settings.get_string('sync-file-path'))
                     .catch(e => warn(`Auto-push failed: ${e.message}`));
-                return GLib.SOURCE_REMOVE;
             });
         });
+    }
+
+    _syncTarget() {
+        const path = this._settings.get_string('sync-file-path');
+        return this._settings.get_boolean('enable-auto-sync') && path ? path : null;
+    }
+
+    _userConfigMoved() {
+        const next = userConfigSignature(this._settings);
+        if (next === this._lastUserConfig)
+            return false;
+        this._lastUserConfig = next;
+        return true;
     }
 
     _connectSettings(keys, handler) {
@@ -160,9 +212,35 @@ export default class BetterTrayIconsExtension extends Extension {
         disconnectSignal(this, this._fileMonitor, '_fileMonitorSignalId');
 
         disposeAll(this, 'cancel', '_fileMonitor', '_syncCancellable');
-        // SniWatcher and XEmbedTrayBridge use .disable() rather than .destroy().
-        disposeAll(this, 'disable', '_xembedBridge', '_manager');
+        disposeAll(this, 'disable', '_backgroundAppsProxyWatcher', '_backgroundApps', '_xembedBridge', '_manager');
         disposeAll(this, 'destroy', '_indicator');
+        disableLauncherEntries();
+        clearIconCaches();
+        clearSeenCache();
+        clearItemSplits();
+        clearWarnedOnce();
         this._settings = null;
     }
+}
+
+// Tray-icon padding moved from 2 non-directional keys to 4 directional ones
+// (2026-07-20). Runs on every enable, not just when prefs opens, so a value
+// someone customized survives even if they never reopen prefs after
+// upgrading. get_user_value returns null while a key sits at its schema
+// default, so this settles into a no-op on every later run once the new
+// keys have moved off it, regardless of whether the old keys are still set.
+function _migrateTrayIconPadding(settings) {
+    const newKeysUntouched = ['icon-padding-top', 'icon-padding-bottom', 'icon-padding-left', 'icon-padding-right']
+        .every(key => settings.get_user_value(key) === null);
+    const oldKeysCustomized = settings.get_user_value('icon-padding-horizontal') !== null ||
+        settings.get_user_value('icon-padding-vertical') !== null;
+    if (!newKeysUntouched || !oldKeysCustomized)
+        return;
+
+    const horizontal = settings.get_int('icon-padding-horizontal');
+    const vertical = settings.get_int('icon-padding-vertical');
+    settings.set_int('icon-padding-left', horizontal);
+    settings.set_int('icon-padding-right', horizontal);
+    settings.set_int('icon-padding-top', vertical);
+    settings.set_int('icon-padding-bottom', vertical);
 }

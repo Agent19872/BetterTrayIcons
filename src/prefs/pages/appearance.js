@@ -2,64 +2,49 @@ import Adw from 'gi://Adw';
 import GObject from 'gi://GObject';
 import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-import ToggleButtonSubpage from '../subpages/toggleButton.js';
-import OverflowMenuSubpage from '../subpages/overflowMenu.js';
-import TrayIconsSubpage from '../subpages/trayIcons.js';
+import ToggleButtonSubpage, {TOGGLE_STYLE_KEYS} from '../subpages/toggleButton.js';
+import OverflowMenuSubpage, {OVERFLOW_STYLE_KEYS} from '../subpages/overflowMenu.js';
+import TrayIconsSubpage, {TRAY_ICON_STYLE_KEYS} from '../subpages/trayIcons.js';
 
-import {createSwitchRow, createSubpageRow} from '../widgets/rows.js';
+import {createSubpageRow, createResetButton} from '../widgets/rows.js';
+
+const APPEARANCE_RESET_KEYS = Object.freeze([
+    ...TRAY_ICON_STYLE_KEYS,
+    ...TOGGLE_STYLE_KEYS,
+    ...OVERFLOW_STYLE_KEYS,
+]);
 
 export class AppearancePage extends Adw.PreferencesPage {
     static {
-        GObject.registerClass(this);
+        GObject.registerClass({GTypeName: 'BetterTrayIconsAppearancePage'}, this);
     }
 
     _init(window, settings) {
         super._init({
             title: _('Appearance'),
-            icon_name: 'applications-graphics-symbolic',
+            icon_name: 'bti-color-symbolic',
         });
 
         this._window = window;
         this._settings = settings;
+        this._headerActions = null;
 
-        this._addSurfaceGroup({
-            title: _('Tray Icons'),
-            switchTitle: _('Custom Style'),
-            switchKey: 'enable-custom-icon-style',
-            subpageTitle: _('Configure'),
-            subpageSubtitle: _('Size, padding, colors'),
-            subpageClass: TrayIconsSubpage,
-        });
+        const group = new Adw.PreferencesGroup({title: _('Elements')});
+        this.add(group);
 
-        this._addToggleButtonGroup();
-
-        this._addSurfaceGroup({
-            title: _('Overflow Menu'),
-            switchTitle: _('Custom Style'),
-            switchKey: 'enable-custom-overflow-style',
-            subpageTitle: _('Configure'),
-            subpageSubtitle: _('Background, radius, spacing'),
-            subpageClass: OverflowMenuSubpage,
+        const surfaces = [
+            [_('Tray Icons'), _('Size, padding, colors'), TrayIconsSubpage, 'view-grid-symbolic'],
+            [_('Toggle Button'), _('Icon, position, colors'), ToggleButtonSubpage, 'pan-down-symbolic'],
+            [_('Overflow Menu'), _('Background, radius, spacing'), OverflowMenuSubpage, 'open-menu-symbolic'],
+        ];
+        surfaces.forEach(([title, subtitle, subpageClass, prefixIcon]) => {
+            group.add(createSubpageRow(title, subtitle, this._window, subpageClass, this._settings, {prefixIcon}));
         });
     }
 
-    _addSurfaceGroup({title, switchTitle, switchKey, subpageTitle, subpageSubtitle, subpageClass}) {
-        const group = new Adw.PreferencesGroup({title});
-        this.add(group);
-
-        group.add(createSwitchRow(switchTitle, null, this._settings, switchKey));
-        group.add(createSubpageRow(
-            subpageTitle, subpageSubtitle,
-            this._window, subpageClass, this._settings, switchKey
-        ));
-    }
-
-    _addToggleButtonGroup() {
-        const group = new Adw.PreferencesGroup({title: _('Toggle Button')});
-        this.add(group);
-        group.add(createSubpageRow(
-            _('Configure'), _('Icon, position, colors'),
-            this._window, ToggleButtonSubpage, this._settings
-        ));
+    get headerActions() {
+        this._headerActions ??= createResetButton(this._settings, APPEARANCE_RESET_KEYS,
+            {window: this._window, includesSubpages: true});
+        return this._headerActions;
     }
 }

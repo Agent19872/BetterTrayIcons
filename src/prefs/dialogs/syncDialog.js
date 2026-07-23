@@ -4,30 +4,26 @@ import GLib from 'gi://GLib';
 import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 import {error} from '../../shared/logging.js';
-import {readFileBytes} from '../../shared/fetch.js';
-import {saveSettingsToFile, loadSettingsFromFile, deleteBackup, listBackups} from '../../shared/settingsIO.js';
-import {connectScoped} from '../../shared/lifecycle.js';
+import {readFileText, fileExists, isCancelledError} from '../../shared/fetch.js';
+import {saveSettingsToFile, loadSettingsFromFile, deleteBackup, listBackups, isOwnSyncSource} from '../../shared/settingsIO.js';
+import {clearIds, connectScoped, debounceTo, removeTimer} from '../../shared/lifecycle.js';
 import {createButton, createIconButton, createImage} from '../widgets/gtkHelpers.js';
 import {createSwitchRow, createSpinRow, createActionRow, createExpanderSection} from '../widgets/rows.js';
-import {showConfirmationDialog} from './dialogs.js';
-import {ENTRY_DEBOUNCE_MS} from '../../const.js';
+import {ENTRY_DEBOUNCE_MS, buildDialogShell, dialogSizeProps, pinDialogWidth, showConfirmationDialog} from './dialogs.js';
+
+const SYNC_DIALOG_WIDTH_PX = 460;
 
 export function openSyncDialog(parentWindow, settings, openJsonFileChooser) {
-    const toolbarView = new Adw.ToolbarView();
-    toolbarView.add_top_bar(new Adw.HeaderBar());
-
-    const toast = new Adw.ToastOverlay();
-    const page = new Adw.PreferencesPage();
-    toast.set_child(page);
-    toolbarView.set_content(toast);
+    const {toolbarView, page, toast} = buildDialogShell({toast: true});
 
     const dialog = new Adw.Dialog({
         title: _('Cloud Sync'),
-        content_width: 460,
+        // The backup list can hold up to max-backups (1-50) rows.
+        ...dialogSizeProps(),
         child: toolbarView,
     });
+    pinDialogWidth(dialog, SYNC_DIALOG_WIDTH_PX);
 
-    // Cancelled on close so the probe can't touch destroyed widgets.
     const cancellable = new Gio.Cancellable();
     dialog.connect('closed', () => cancellable.cancel());
 
@@ -48,29 +44,17 @@ export function openSyncDialog(parentWindow, settings, openJsonFileChooser) {
     // Typing in the path row fires per keystroke and each probe below can
     // stat a remote mount. One shared debounce covers them all. `immediate`
     // skips it after Push/Pull/Delete so the rows update right away.
-    let refreshDebounceId = 0;
+    const timers = {refresh: 0};
     refreshAll = ({immediate = false} = {}) => {
-        if (refreshDebounceId) {
-            GLib.source_remove(refreshDebounceId);
-            refreshDebounceId = 0;
-        }
         if (immediate) {
+            clearIds(timers, removeTimer, 'refresh');
             doRefresh();
             return;
         }
-        refreshDebounceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ENTRY_DEBOUNCE_MS, () => {
-            refreshDebounceId = 0;
-            doRefresh();
-            return GLib.SOURCE_REMOVE;
-        });
+        debounceTo(timers, 'refresh', ENTRY_DEBOUNCE_MS, doRefresh);
     };
 
-    dialog.connect('closed', () => {
-        if (refreshDebounceId) {
-            GLib.source_remove(refreshDebounceId);
-            refreshDebounceId = 0;
-        }
-    });
+    dialog.connect('closed', () => clearIds(timers, removeTimer, 'refresh'));
 
     file.pathRow.connect('notify::text', () => refreshAll());
     connectScoped(dialog, settings, 'changed::enable-auto-sync', () => refreshAll({immediate: true}), 'closed');
@@ -102,14 +86,14 @@ function _buildSyncLocationGroup(page, settings, openJsonFileChooser, cancellabl
         pathRow.set_subtitle(_('Schema key "sync-file-path" missing.'));
 
     const warningIcon = createImage({
-        icon_name: 'dialog-warning-symbolic',
+        icon_name: 'bti-warning-symbolic',
         valign: 'center',
         visible: false,
         tooltip_text: _('File is not valid JSON'),
     });
     pathRow.add_suffix(warningIcon);
 
-    const fileBtn = createIconButton('folder-open-symbolic', {
+    const fileBtn = createIconButton('bti-folder-symbolic', {
         circular: false,
         callback: () => {
             openJsonFileChooser(path => {
@@ -141,39 +125,38 @@ function _buildSyncLocationGroup(page, settings, openJsonFileChooser, cancellabl
     return {pathRow, refreshStatus};
 }
 
-function _probeSyncFile(path, statusRow, warningIcon, cancellable) {
+async function _probeSyncFile(path, statusRow, warningIcon, cancellable) {
     const file = Gio.File.new_for_path(path);
 
-    file.query_info_async('time::modified', Gio.FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, cancellable, (src, res) => {
-        let mtime;
-        try {
-            mtime = src.query_info_finish(res).get_modification_date_time();
-        } catch (e) {
-            if (e?.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
-                return;
-            statusRow.set_subtitle(_('File not yet created'));
-            warningIcon.set_visible(false);
+    let mtime;
+    try {
+        const info = await file.query_info_async('time::modified', Gio.FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, cancellable);
+        mtime = info.get_modification_date_time();
+    } catch (e) {
+        if (isCancelledError(e))
             return;
-        }
+        statusRow.set_subtitle(_('File not yet created'));
+        warningIcon.set_visible(false);
+        return;
+    }
 
-        readFileBytes(file, cancellable).then(contents => {
-            const data = JSON.parse(new TextDecoder().decode(contents));
-            warningIcon.set_visible(false);
-            statusRow.set_subtitle(_formatSyncStatus(mtime, data._meta));
-        }).catch(e => {
-            if (e?.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
-                return;
-            warningIcon.set_visible(true);
-            statusRow.set_subtitle(mtime ? mtime.format('%Y-%m-%d %H:%M:%S') : _('Unknown'));
-        });
-    });
+    try {
+        const data = JSON.parse(await readFileText(file, cancellable));
+        warningIcon.set_visible(false);
+        statusRow.set_subtitle(_formatSyncStatus(mtime, data._meta));
+    } catch (e) {
+        if (isCancelledError(e))
+            return;
+        warningIcon.set_visible(true);
+        statusRow.set_subtitle(mtime ? mtime.format('%Y-%m-%d %H:%M:%S') : _('Unknown'));
+    }
 }
 
 function _formatSyncStatus(mtime, meta) {
     const timeStr = mtime ? mtime.format('%Y-%m-%d %H:%M') : _('Unknown');
     if (!meta || !meta.source)
         return timeStr;
-    const origin = meta.source === GLib.get_host_name() ? _('this device') : meta.source;
+    const origin = isOwnSyncSource(meta) ? _('this device') : meta.source;
     return `${timeStr} · ${_('from')} ${origin}`;
 }
 
@@ -238,13 +221,13 @@ function _buildActionsGroup(page, pathRow, settings, dialog, toast, onAfterActio
             const path = pathRow.get_text();
             if (!path)
                 return;
-            showConfirmationDialog(
-                dialog, _('Pull from file?'), _('Local settings will be overwritten.'),
-                () => _runSyncOp(() => loadSettingsFromFile(settings, path), toast, onAfterAction, {
-                    successMsg: _('Settings pulled'), failurePrefix: _('Pull failed'),
-                }),
-                _('Pull'), true
-            );
+            _confirmAndRunSync(dialog, toast, onAfterAction, {
+                heading: _('Pull from file?'),
+                body: _('App settings are merged; other settings are taken from the file.'),
+                confirmLabel: _('Pull'),
+                op: () => loadSettingsFromFile(settings, path, {merge: true}),
+                successMsg: _('Settings pulled'), failurePrefix: _('Pull failed'),
+            });
         },
     });
 
@@ -269,25 +252,12 @@ function _buildActionRow(group, {title, btnLabel, onClick}) {
     return btn;
 }
 
-// The path can sit on a network mount, so never stat it synchronously.
-function _checkExistsAsync(path, cancellable, onResult) {
-    Gio.File.new_for_path(path).query_info_async(
-        'standard::type',
-        Gio.FileQueryInfoFlags.NONE,
-        GLib.PRIORITY_DEFAULT,
-        cancellable,
-        (obj, res) => {
-            let exists = false;
-            try {
-                obj.query_info_finish(res);
-                exists = true;
-            } catch (e) {
-                if (e?.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
-                    return;
-            }
-            onResult(exists);
-        }
-    );
+async function _checkExistsAsync(path, cancellable, onResult) {
+    try {
+        onResult(await fileExists(path, cancellable));
+    } catch {
+        // cancelled
+    }
 }
 
 async function _runSyncOp(op, toast, onAfter, {successMsg, failurePrefix}) {
@@ -299,6 +269,14 @@ async function _runSyncOp(op, toast, onAfter, {successMsg, failurePrefix}) {
         error(`${failurePrefix}: ${e.message}`);
         toast.add_toast(new Adw.Toast({title: `${failurePrefix}: ${e.message}`}));
     }
+}
+
+function _confirmAndRunSync(dialog, toast, onAfterAction, {heading, body, confirmLabel, op, successMsg, failurePrefix}) {
+    showConfirmationDialog(
+        dialog, heading, body,
+        () => _runSyncOp(op, toast, onAfterAction, {successMsg, failurePrefix}),
+        confirmLabel, true
+    );
 }
 
 function _buildBackupHistoryGroup(page, pathRow, dialog, toast, settings, onAfterAction, cancellable) {
@@ -335,15 +313,14 @@ function _buildBackupHistoryGroup(page, pathRow, dialog, toast, settings, onAfte
             if (gen !== refreshGen || cancellable.is_cancelled())
                 return;
 
-            const compressed = backups.filter(b => b.compressed);
-            setRows(compressed.map(b => _buildBackupRow({
+            setRows(backups.map(b => _buildBackupRow({
                 path: b.path, index: b.index, mtime: b.mtime,
-                pathRow, dialog, toast, settings, onAfterAction,
+                dialog, toast, settings, onAfterAction,
             })));
 
-            if (compressed.length > 0) {
+            if (backups.length > 0) {
                 expander.sensitive = true;
-                expander.subtitle = `${compressed.length} ${_('available')}`;
+                expander.subtitle = `${backups.length} ${_('available')}`;
             } else {
                 showEmpty();
             }
@@ -353,37 +330,29 @@ function _buildBackupHistoryGroup(page, pathRow, dialog, toast, settings, onAfte
     return {refresh};
 }
 
-function _buildBackupRow({path, index, mtime, pathRow, dialog, toast, settings, onAfterAction}) {
+function _buildBackupRow({path, index, mtime, dialog, toast, settings, onAfterAction}) {
     const label = mtime
         ? `${_('Backup')} ${index} · ${mtime.format('%Y-%m-%d %H:%M')}`
         : `${_('Backup')} ${index}`;
 
-    const deleteBtn = createIconButton('user-trash-symbolic', {
+    const deleteBtn = createIconButton('bti-trash-symbolic', {
         extraClasses: ['destructive-action'],
         tooltip_text: _('Delete'),
-        callback: () => {
-            showConfirmationDialog(
-                dialog, _('Delete this backup?'), _('The backup file will be permanently removed.'),
-                () => _runSyncOp(() => deleteBackup(pathRow.text, index), toast, onAfterAction, {
-                    successMsg: _('Backup deleted'), failurePrefix: _('Delete failed'),
-                }),
-                _('Delete'), true
-            );
-        },
+        callback: () => _confirmAndRunSync(dialog, toast, onAfterAction, {
+            heading: _('Delete this backup?'), body: _('The backup file will be permanently removed.'), confirmLabel: _('Delete'),
+            op: () => deleteBackup(path),
+            successMsg: _('Backup deleted'), failurePrefix: _('Delete failed'),
+        }),
     });
 
-    const restoreBtn = createIconButton('folder-download-symbolic', {
+    const restoreBtn = createIconButton('bti-download-symbolic', {
         flat: false,
         tooltip_text: _('Restore'),
-        callback: () => {
-            showConfirmationDialog(
-                dialog, _('Restore this backup?'), _('Local settings will be overwritten.'),
-                () => _runSyncOp(() => loadSettingsFromFile(settings, path), toast, onAfterAction, {
-                    successMsg: _('Backup restored'), failurePrefix: _('Restore failed'),
-                }),
-                _('Restore'), true
-            );
-        },
+        callback: () => _confirmAndRunSync(dialog, toast, onAfterAction, {
+            heading: _('Restore this backup?'), body: _('Local settings will be overwritten.'), confirmLabel: _('Restore'),
+            op: () => loadSettingsFromFile(settings, path),
+            successMsg: _('Backup restored'), failurePrefix: _('Restore failed'),
+        }),
     });
 
     return createActionRow(label, null, {suffixWidgets: [deleteBtn, restoreBtn]});

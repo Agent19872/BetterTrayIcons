@@ -2,19 +2,21 @@ import Adw from 'gi://Adw';
 import Gtk from 'gi://Gtk';
 import Gdk from 'gi://Gdk';
 import GObject from 'gi://GObject';
-import GLib from 'gi://GLib';
 import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-import {clearIds, removeTimer} from '../../shared/lifecycle.js';
-import {themedIconWithFallback, pathOrThemedIcon} from '../../shared/icon.js';
-import {createIconButton, createFileFilter} from './gtkHelpers.js';
-import {openFileChooser} from '../dialogs/dialogs.js';
-import {PAGE_JUMP_DEBOUNCE_MS} from '../../const.js';
+import {clearIds, debounceTo, removeTimer} from '../../shared/lifecycle.js';
+import {themedIcon} from '../../shared/icon.js';
+import {createBox, createButton, createIconButton, createImage, createLabel, createFileFilter, applyPathIcon, clearChildren} from '../widgets/gtkHelpers.js';
+import {openFileChooser} from './dialogs.js';
+import {NEXT_ICON_NAME} from '../widgets/rows.js';
 
-// Pass `options.showCustom: false` to hide the free-form tab.
-export default class IconPickerWidget extends Adw.PreferencesDialog {
+// Slower to allow multi-digit input.
+const PAGE_JUMP_DEBOUNCE_MS = 500;
+const ITEMS_PER_PAGE = 32;
+
+export default class IconPickerDialog extends Adw.PreferencesDialog {
     static {
-        GObject.registerClass(this);
+        GObject.registerClass({GTypeName: 'BetterTrayIconsIconPickerWidget'}, this);
     }
 
     _init(settings, settingsKey, iconList, onSelectCallback = null, initialIcon = null, options = {}) {
@@ -37,11 +39,11 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
         this._allSystemIcons = [];
         this._currentFilteredList = [];
         this._currentPage = 0;
-        this._itemsPerPage = 32;
+        this._itemsPerPage = ITEMS_PER_PAGE;
         this._inputTimeoutId = 0;
 
-        // Both grids can highlight the current icon.
-        // Tracks every active button so a click can clear the others.
+        // Both grids can show the current icon, so a click has to clear the
+        // other grid's highlight too.
         this._activeGridBtns = new Set();
 
         this._buildUI();
@@ -51,7 +53,7 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
         if (this._iconList && this._iconList.length > 0) {
             const pageRec = new Adw.PreferencesPage({
                 title: _('Recommended'),
-                icon_name: 'emblem-favorite-symbolic',
+                icon_name: 'bti-star-symbolic',
                 name: 'recommended',
             });
             const groupRec = new Adw.PreferencesGroup();
@@ -73,7 +75,7 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
     _buildAllIconsPage() {
         const pageAll = new Adw.PreferencesPage({
             title: _('All Icons'),
-            icon_name: 'view-grid-symbolic',
+            icon_name: 'bti-grid-symbolic',
             name: 'all',
         });
 
@@ -91,24 +93,19 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
         this._resultsGroup = new Adw.PreferencesGroup({title: _('System Icons')});
         pageAll.add(this._resultsGroup);
 
-        this._allIconsGridContainer = new Gtk.Box({
-            orientation: Gtk.Orientation.VERTICAL,
-            halign: Gtk.Align.FILL,
-        });
+        this._allIconsGridContainer = createBox({halign: 'fill'});
         this._resultsGroup.add(this._allIconsGridContainer);
 
         this._paginationGroup = new Adw.PreferencesGroup();
         pageAll.add(this._paginationGroup);
 
-        const paginationBox = new Gtk.Box({
-            orientation: Gtk.Orientation.HORIZONTAL,
-            halign: Gtk.Align.CENTER,
-            spacing: 12,
+        const paginationBox = createBox({
+            orientation: 'horizontal', halign: 'center', spacing: 12,
             margin_top: 6, margin_bottom: 12,
         });
         this._paginationGroup.add(paginationBox);
 
-        this._prevPageBtn = createIconButton('go-previous-symbolic', {tooltip_text: _('Previous')});
+        this._prevPageBtn = createIconButton('bti-previous-symbolic', {tooltip_text: _('Previous')});
 
         this._pageEntry = new Gtk.Entry({
             width_chars: 4,
@@ -118,12 +115,9 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
             input_purpose: Gtk.InputPurpose.DIGITS,
         });
 
-        this._totalPageLabel = new Gtk.Label({
-            label: '/ 1',
-            css_classes: ['dim-label'],
-        });
+        this._totalPageLabel = createLabel('/ 1', ['dim-label']);
 
-        this._nextPageBtn = createIconButton('go-next-symbolic', {tooltip_text: _('Next')});
+        this._nextPageBtn = createIconButton(NEXT_ICON_NAME, {tooltip_text: _('Next')});
 
         paginationBox.append(this._prevPageBtn);
         paginationBox.append(this._pageEntry);
@@ -138,7 +132,7 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
     _buildCustomPage() {
         const pageCustom = new Adw.PreferencesPage({
             title: _('Custom'),
-            icon_name: 'document-properties-symbolic',
+            icon_name: 'bti-properties-symbolic',
             name: 'custom',
         });
         const groupCustom = new Adw.PreferencesGroup({
@@ -147,11 +141,7 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
         });
         pageCustom.add(groupCustom);
 
-        const previewImg = new Gtk.Image({
-            pixel_size: 64,
-            halign: Gtk.Align.CENTER,
-            margin_top: 16,
-        });
+        const previewImg = createImage({pixel_size: 64, halign: 'center', margin_top: 16});
 
         const entry = new Gtk.Entry({
             placeholder_text: _('Icon name or path'),
@@ -160,14 +150,7 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
             text: this._currentIcon || '',
         });
 
-        const updateCustomPreview = () => {
-            const text = entry.text.trim();
-            if (!text) {
-                previewImg.clear();
-                return;
-            }
-            previewImg.set_from_gicon(pathOrThemedIcon(text));
-        };
+        const updateCustomPreview = () => applyPathIcon(previewImg, entry.text.trim());
         entry.connect('changed', updateCustomPreview);
         updateCustomPreview();
 
@@ -184,21 +167,20 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
 
         entry.connect('activate', finishSelection);
 
-        const customBox = new Gtk.Box({
-            orientation: Gtk.Orientation.HORIZONTAL,
-            spacing: 12,
+        const customBox = createBox({
+            orientation: 'horizontal', spacing: 12,
             margin_top: 12, margin_bottom: 12,
             margin_start: 12, margin_end: 12,
         });
 
-        const fileBtn = createIconButton('folder-open-symbolic', {
+        const fileBtn = createIconButton('bti-folder-symbolic', {
             flat: false,
             circular: false,
             tooltip_text: _('Choose file'),
         });
         fileBtn.connect('clicked', () => this._openFileChooser(entry));
 
-        const applyBtn = createIconButton('object-select-symbolic', {
+        const applyBtn = createIconButton('bti-select-symbolic', {
             flat: false,
             extraClasses: ['suggested-action'],
             tooltip_text: _('Apply'),
@@ -209,7 +191,7 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
         customBox.append(fileBtn);
         customBox.append(applyBtn);
 
-        const wrapper = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL});
+        const wrapper = createBox();
         wrapper.append(previewImg);
         wrapper.append(customBox);
         groupCustom.add(wrapper);
@@ -218,9 +200,8 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
     }
 
     _setInitialTab() {
-        // Jump to the active icon's page every time the "All" tab opens.
-        // _currentFilteredList is used instead of _allSystemIcons so the page
-        // is correct while a search filter is active.
+        // _currentFilteredList, not _allSystemIcons, so the page is right
+        // while a search filter is active.
         this.connect('notify::visible-page-name', () => {
             if (this.visible_page_name !== 'all' || !this._currentIcon)
                 return;
@@ -231,8 +212,6 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
             }
         });
 
-        // If the active icon is not in the recommended list, open the "All"
-        // tab at the right page right away.
         if (this._currentIcon && !this._iconList?.includes(this._currentIcon)) {
             const index = this._allSystemIcons.indexOf(this._currentIcon);
             if (index !== -1)
@@ -271,12 +250,9 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
         });
 
         this._pageEntry.connect('changed', entry => {
-            clearIds(this, removeTimer, '_inputTimeoutId');
-            this._inputTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, PAGE_JUMP_DEBOUNCE_MS, () => {
-                this._inputTimeoutId = 0;
+            debounceTo(this, '_inputTimeoutId', PAGE_JUMP_DEBOUNCE_MS, () => {
                 if (this.get_root())
                     this._jumpToPage(entry);
-                return GLib.SOURCE_REMOVE;
             });
         });
     }
@@ -294,15 +270,7 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
     }
 
     _renderAllIconsPage() {
-        if (!this._allIconsGridContainer)
-            return;
-
-        let child = this._allIconsGridContainer.get_first_child();
-        while (child) {
-            const next = child.get_next_sibling();
-            this._allIconsGridContainer.remove(child);
-            child = next;
-        }
+        clearChildren(this._allIconsGridContainer);
 
         // Buttons from discarded page renders would otherwise pile up
         // and get restyled on every click.
@@ -312,9 +280,8 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
         }
 
         if (this._currentFilteredList.length === 0) {
-            // Empty-state when the search filter excluded everything.
             const status = new Adw.StatusPage({
-                icon_name: 'system-search-symbolic',
+                icon_name: 'bti-search-symbolic',
                 title: _('No Icons Found'),
                 description: _('Try a different search term.'),
             });
@@ -339,9 +306,6 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
     }
 
     _updatePaginationUI() {
-        if (!this._pageEntry)
-            return;
-
         const totalItems = this._currentFilteredList.length;
         const totalPages = Math.ceil(totalItems / this._itemsPerPage) || 1;
 
@@ -366,30 +330,23 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
         const COLUMNS = 8;
 
         iconList.forEach((iconName, index) => {
-            const btn = new Gtk.Button({
+            const isCurrent = this._currentIcon === iconName;
+            const btn = createButton({
+                valign: 'fill',
                 height_request: 56,
                 hexpand: true,
                 tooltip_text: iconName,
+                cssClasses: isCurrent ? ['suggested-action', 'circular'] : ['flat', 'circular'],
             });
 
-            const img = new Gtk.Image({pixel_size: 32});
-            // ThemedIcon with fallback: GTK4 shows a blank image when setting icon_name
-            // directly and the icon isn't in the current theme.
-            // The fallback chain forces "image-missing" instead.
-            img.set_from_gicon(themedIconWithFallback(iconName));
+            const img = createImage({pixel_size: 32});
+            img.set_from_gicon(themedIcon(iconName));
             btn.set_child(img);
 
-            if (this._currentIcon === iconName) {
-                btn.set_css_classes(['suggested-action', 'circular']);
+            if (isCurrent)
                 this._activeGridBtns.add(btn);
-            } else {
-                btn.set_css_classes(['flat', 'circular']);
-            }
 
             btn.connect('clicked', () => {
-                // Clear every previously highlighted button across all grids
-                // before marking the clicked one.
-                // Keeps Recommended and All Icons in sync.
                 this._activeGridBtns.forEach(b => b.set_css_classes(['flat', 'circular']));
                 this._activeGridBtns.clear();
                 btn.set_css_classes(['suggested-action', 'circular']);
@@ -412,14 +369,9 @@ export default class IconPickerWidget extends Adw.PreferencesDialog {
         return grid;
     }
 
-    // Adw.PreferencesGroup only fills its width when the direct child is a
-    // Gtk.Box, so the grid needs a wrapper.
     _createGrid(iconList) {
         const grid = this._createGridWidget(iconList);
-        const wrapper = new Gtk.Box({
-            orientation: Gtk.Orientation.VERTICAL,
-            halign: Gtk.Align.FILL,
-        });
+        const wrapper = createBox({halign: 'fill'});
         wrapper.append(grid);
         return wrapper;
     }
@@ -443,8 +395,8 @@ function _setVisibleButton(btn, on) {
     btn.set_sensitive(on);
 }
 
-// Enumerating and lookup-validating every symbolic icon is a sweep over
-// thousands of names, so it runs once per process, not per picker open.
+// Enumerating and lookup-validating every symbolic icon is expensive, so it
+// runs once per process, not per picker open.
 let _systemIconsCache = null;
 let _themeWatchConnected = false;
 
@@ -455,7 +407,6 @@ function _getSystemIcons() {
     const iconTheme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default());
     if (!_themeWatchConnected) {
         _themeWatchConnected = true;
-        // Invalidate lazily, the next open re-enumerates.
         iconTheme.connect('changed', () => (_systemIconsCache = null));
     }
 
@@ -465,9 +416,8 @@ function _getSystemIcons() {
         if (name.includes('night') || name.includes('rtl') || name.startsWith('adw-'))
             return false;
 
-        // Verify the icon resolves to an actual file. Icons from unrelated
-        // installed themes can appear in get_icon_names() without having
-        // a real backing file in the shell's icon lookup path.
+        // Icons from unrelated installed themes appear in get_icon_names()
+        // without a real backing file in the shell's icon lookup path.
         const paintable = iconTheme.lookup_icon(
             name, null, 16, 1, Gtk.TextDirection.LTR, 0
         );

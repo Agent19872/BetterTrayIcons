@@ -7,22 +7,47 @@ import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions
 
 import {error} from '../../shared/logging.js';
 import {disconnectAll} from '../../shared/lifecycle.js';
-import {fetchJson, fetchBytes} from '../../shared/fetch.js';
-import {createLabel, createBox, createPicture, createAvatar, createCard, createCardRow, createTextureFromBytes, createButton} from '../widgets/gtkHelpers.js';
-import {createActionRow, createLinkRow} from '../widgets/rows.js';
-import {bindLogoToTheme, bindSvgIconToTheme} from '../widgets/theme.js';
-import {openUri, showTextDialog} from '../dialogs/dialogs.js';
-import {GIT_REPO_URL, LICENSE_URL, SPONSOR_URL, TRANSLATE_URL, MAX_CONTRIBUTORS, CONTRIBUTORS_OPTOUT} from '../../const.js';
+import {fetchJson, fetchBytes, isCancelledError} from '../../shared/fetch.js';
+import {createLabel, createBox, createPicture, createImage, createAvatar, createCard, createCardRow, createTextureFromBytes, createButton} from '../widgets/gtkHelpers.js';
+import {createActionRow} from '../widgets/rows.js';
+import {bindLogoToTheme} from '../widgets/theme.js';
+import {openUri, showTextDialog, buildGroupDialog} from '../dialogs/dialogs.js';
+import {CONTRIBUTORS_OPTOUT} from '../../const.js';
+
+const GIT_REPO_URL = 'https://github.com/nexaknight/BetterTrayIcons';
+
+const GITHUB_API_REPO_URL = GIT_REPO_URL.replace('github.com/', 'api.github.com/repos/');
+
+const LICENSE_URL = 'https://github.com/nexaknight/BetterTrayIcons/blob/main/LICENSE';
+
+const SPONSOR_URL = 'https://github.com/sponsors/nexaknight';
+
+const TRANSLATE_URL = 'https://github.com/nexaknight/BetterTrayIcons/wiki/Translation-Guidelines';
+
+// Our glyphs fill their whole canvas while symbolic theme icons carry
+// padding, so they need a smaller box to read at the same weight.
+const ABOUT_ROW_ICON_SIZE_PX = 16;
+
+const ABOUT_INLINE_ICON_SIZE_PX = 18;
+
+const MAX_CONTRIBUTORS = 5;
+
+// Releases accumulate over the project's lifetime, so the dialog starts
+// with one page and fetches the next on demand instead of pulling the
+// whole history up front.
+const CHANGELOG_PAGE_SIZE = 5;
+
+const CHANGELOG_DIALOG_WIDTH_PX = 600;
 
 export class AboutPage extends Adw.PreferencesPage {
     static {
-        GObject.registerClass(this);
+        GObject.registerClass({GTypeName: 'BetterTrayIconsAboutPage'}, this);
     }
 
     _init(extensionDir, metadata, settings) {
         super._init({
             title: _('About'),
-            icon_name: 'help-about-symbolic',
+            icon_name: 'bti-about-symbolic',
         });
 
         this._extensionDir = extensionDir;
@@ -36,42 +61,42 @@ export class AboutPage extends Adw.PreferencesPage {
     }
 
     _buildUI() {
-        const assetsDir = this._extensionDir.get_child('assets');
+        this._assetsDir = this._extensionDir.get_child('assets');
         const translateBanner = new Adw.Banner({
             title: _('Help translate this extension.'),
             button_label: _('Translate'),
             revealed: true,
         });
         translateBanner.connect('button-clicked', () => {
-            new Gtk.UriLauncher({uri: TRANSLATE_URL}).launch(this.get_root(), null, null);
+            openUri(this.get_root(), TRANSLATE_URL);
         });
         this.set_banner(translateBanner);
 
         const infoGroup = new Adw.PreferencesGroup({title: _('Information')});
         this.add(infoGroup);
 
-        const versionLabel = createLabel(String(this._metadata.version ?? 'dev'));
+        // extensions.gnome.org stamps the numeric version on upload, so a build
+        // without one was installed from git and gets marked as such.
+        const {version, 'version-name': versionName} = this._metadata;
+        const versionLabel = createLabel(
+            [versionName, version ? null : 'dev'].filter(Boolean).join(' ') || 'dev');
         const versionRow = createActionRow(_('Version'), '', {
-            prefixIcon: 'tag-symbolic',
+            prefixWidget: this._createIcon('bti-tag-symbolic', ABOUT_ROW_ICON_SIZE_PX),
             headerSuffix: versionLabel,
         });
         infoGroup.add(versionRow);
 
         const githubBox = createBox({orientation: 'horizontal', spacing: 6, valign: 'center', halign: 'end'});
 
-        const githubIcon = createPicture({
-            width_request: 18,
-            height_request: 18,
-            valign: 'center',
+        const githubIcon = this._createIcon('bti-github-symbolic', ABOUT_INLINE_ICON_SIZE_PX, {
             tooltip_text: _('Open on GitHub'),
-            content_fit: 2, // Gtk.ContentFit.CONTAIN
         });
 
         githubBox.append(githubIcon);
         githubBox.append(createLabel('GitHub', []));
 
         const sourceRow = createActionRow(_('Source Code'), '', {
-            prefixIcon: 'applications-development-symbolic',
+            prefixWidget: this._createIcon('bti-code-symbolic', ABOUT_ROW_ICON_SIZE_PX),
             headerSuffix: githubBox,
             onActivate: () => openUri(this.get_root(), GIT_REPO_URL),
         });
@@ -81,7 +106,7 @@ export class AboutPage extends Adw.PreferencesPage {
             _('Changelog'),
             _('Recent releases'),
             {
-                prefixIcon: 'document-open-recent-symbolic',
+                prefixWidget: this._createIcon('bti-changelog-symbolic', ABOUT_ROW_ICON_SIZE_PX),
                 onActivate: () => this._fetchAndShowChangelog(),
             }
         );
@@ -91,8 +116,8 @@ export class AboutPage extends Adw.PreferencesPage {
             _('Sponsor'),
             _('Support development.'),
             {
-                prefixIcon: 'emblem-favorite-symbolic',
-                suffixIcon: 'link-symbolic',
+                prefixWidget: this._createIcon('bti-heart-symbolic', ABOUT_ROW_ICON_SIZE_PX),
+                suffixWidgets: [this._createIcon('adw-external-link-symbolic', ABOUT_INLINE_ICON_SIZE_PX)],
                 onActivate: () => openUri(this.get_root(), SPONSOR_URL),
             }
         );
@@ -107,7 +132,10 @@ export class AboutPage extends Adw.PreferencesPage {
             title: _('Legal'),
         });
 
-        legalGroup.add(createLinkRow(_('License'), '', 'text-x-generic-symbolic', this.get_root(), LICENSE_URL));
+        legalGroup.add(createActionRow(_('License'), '', {
+            prefixWidget: this._createIcon('bti-license-symbolic', ABOUT_ROW_ICON_SIZE_PX),
+            onActivate: () => openUri(this.get_root(), LICENSE_URL),
+        }));
 
         const disclaimerLabel = createLabel(
             _('Provided "as is", without warranty. The authors are not liable for damages.'),
@@ -133,7 +161,7 @@ export class AboutPage extends Adw.PreferencesPage {
 
         const logo = createPicture({
             can_shrink: true,
-            content_fit: 2, // Gtk.ContentFit.CONTAIN
+            content_fit: Gtk.ContentFit.CONTAIN,
             width_request: 160,
             height_request: 160,
             halign: 'center',
@@ -147,47 +175,86 @@ export class AboutPage extends Adw.PreferencesPage {
 
         creditsGroup.add(footerBox);
 
-        // Reading and rasterizing the SVGs is the expensive part of this
+        // Reading and rasterizing the logo is the expensive part of this
         // page, so defer it until the page is actually shown.
         const mapId = this.connect('map', () => {
             this.disconnect(mapId);
-            this._themeSignals.push(bindSvgIconToTheme(githubIcon, assetsDir, 'github-icon.svg', 18));
-            this._themeSignals.push(bindLogoToTheme(logo, fallbackLabel, assetsDir, 'logo.svg'));
+            this._themeSignals.push(bindLogoToTheme(logo, fallbackLabel, this._assetsDir, 'logo.svg'));
+        });
+    }
+
+    _createIcon(iconName, size, props = {}) {
+        return createImage({
+            icon_name: iconName,
+            pixel_size: size,
+            valign: 'center',
+            halign: 'center',
+            ...props,
         });
     }
 
     async _fetchAndShowChangelog() {
         try {
-            const repoMatch = GIT_REPO_URL.match(/github\.com\/([^/]+)\/([^/]+)/);
-            if (!repoMatch)
-                throw new Error('Invalid Repo URL');
-
-            const apiUrl = `https://api.github.com/repos/${repoMatch[1]}/${repoMatch[2]}/releases`;
-            const releases = await fetchJson(apiUrl, this._cancellable);
-
-            let text = '';
-            if (Array.isArray(releases) && releases.length > 0) {
-                // Escape per release so a maintainer-controlled body can't break
-                // out into Pango markup the GtkLabel would refuse to render.
-                const escape = s => GLib.markup_escape_text(String(s ?? ''), -1);
-                releases.forEach(r => {
-                    text += `<b>${escape(r.name || r.tag_name)}</b>\n`;
-                    text += `${escape(r.body)}\n\n`;
-                });
-            } else {
-                text = _('No releases found.');
+            const releases = await this._fetchReleasePage(1);
+            if (releases.length === 0) {
+                showTextDialog(this.get_root(), _('Changelog'), _('No releases found.'));
+                return;
             }
-
-            showTextDialog(this.get_root(), _('Changelog'), text);
+            this._showChangelogDialog(releases);
         } catch (e) {
-            if (e?.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+            if (isCancelledError(e))
                 return;
             error('Failed to fetch changelog', e);
             showTextDialog(this.get_root(), _('Changelog'), _('Failed to load changelog: ') + e.message);
         }
     }
 
-    // Network access is opt-in. Defer the fetch until the user clicks.
+    async _fetchReleasePage(page) {
+        const url = `${GITHUB_API_REPO_URL}/releases?per_page=${CHANGELOG_PAGE_SIZE}&page=${page}`;
+        const releases = await fetchJson(url, this._cancellable);
+        return Array.isArray(releases) ? releases : [];
+    }
+
+    _showChangelogDialog(firstPage) {
+        const {group, present} = buildGroupDialog({
+            title: _('Changelog'),
+            width: CHANGELOG_DIALOG_WIDTH_PX,
+        });
+
+        const list = createBox({orientation: 'vertical'});
+        group.add(list);
+        firstPage.forEach((release, i) => _appendRelease(list, release, i > 0));
+
+        let page = 1;
+        // A page shorter than the batch is the last one, a full page may
+        // have more behind it.
+        const moreBtn = createButton({
+            label: _('Load older releases'),
+            halign: 'center',
+            margin_bottom: 12,
+            visible: firstPage.length === CHANGELOG_PAGE_SIZE,
+        });
+        moreBtn.connect('clicked', async () => {
+            moreBtn.sensitive = false;
+            try {
+                const releases = await this._fetchReleasePage(page + 1);
+                page += 1;
+                releases.forEach(release => _appendRelease(list, release, true));
+                moreBtn.visible = releases.length === CHANGELOG_PAGE_SIZE;
+            } catch (e) {
+                if (isCancelledError(e))
+                    return;
+                error('Failed to fetch changelog', e);
+            } finally {
+                moreBtn.sensitive = true;
+            }
+        });
+        group.add(moreBtn);
+
+        present(this.get_root());
+    }
+
+    // Network access is opt-in, so nothing loads until the user clicks.
     _setupContributorsLoader(group) {
         const loadBtn = createButton({
             label: _('Load'),
@@ -198,7 +265,7 @@ export class AboutPage extends Adw.PreferencesPage {
         const placeholder = createActionRow(
             _('Loaded from GitHub'),
             _('Contacts api.github.com on demand.'),
-            {prefixIcon: 'system-users-symbolic', headerSuffix: loadBtn}
+            {prefixWidget: this._createIcon('bti-users-symbolic', ABOUT_ROW_ICON_SIZE_PX), headerSuffix: loadBtn}
         );
         group.add(placeholder);
 
@@ -214,18 +281,12 @@ export class AboutPage extends Adw.PreferencesPage {
         group.add(loadingRow);
 
         try {
-            const repoMatch = GIT_REPO_URL.match(/github\.com\/([^/]+)\/([^/]+)/);
-            if (!repoMatch)
-                throw new Error('Invalid Repo URL');
-
-            const apiUrl = `https://api.github.com/repos/${repoMatch[1]}/${repoMatch[2]}/contributors`;
             let data = [];
             try {
-                data = await fetchJson(apiUrl, this._cancellable);
+                data = await fetchJson(`${GITHUB_API_REPO_URL}/contributors`, this._cancellable);
             } catch (e) {
-                if (e?.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                if (isCancelledError(e))
                     return;
-                // Network errors or rate limits: keep the UI quiet.
                 error(`Failed to fetch contributors: ${e.message}`);
             }
 
@@ -254,16 +315,16 @@ export class AboutPage extends Adw.PreferencesPage {
                 return createCard({
                     avatar,
                     title: c.login,
-                    subtitle: `${c.contributions} commits`,
+                    subtitle: `${c.contributions} ${_('commits')}`,
                     tooltip: c.login,
                     onActivate: () => openUri(this.get_root(), c.html_url),
                 });
             });
 
             if (data.length > MAX_CONTRIBUTORS) {
-                const moreUrl = `${GIT_REPO_URL.replace(/\.git$/, '')}/graphs/contributors`;
+                const moreUrl = `${GIT_REPO_URL}/graphs/contributors`;
                 cards.push(createCard({
-                    iconName: 'applications-other-symbolic',
+                    iconName: 'bti-other-symbolic',
                     iconSize: 48,
                     title: _('Show more'),
                     tooltip: _('Open on GitHub'),
@@ -287,7 +348,7 @@ export class AboutPage extends Adw.PreferencesPage {
             if (texture)
                 avatar.set_custom_image(texture);
         } catch (e) {
-            if (e?.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+            if (isCancelledError(e))
                 return;
             error(`Failed to load avatar for ${url}`, e);
         }
@@ -307,4 +368,42 @@ function filterContributors(list) {
     return list.filter(c =>
         c && typeof c.login === 'string' && !CONTRIBUTORS_OPTOUT.has(c.login.toLowerCase())
     );
+}
+
+function _appendRelease(list, release, withSeparator) {
+    if (withSeparator)
+        list.append(new Gtk.Separator({margin_start: 12, margin_end: 12}));
+
+    const name = GLib.markup_escape_text(String(release.name || release.tag_name || ''), -1);
+    list.append(createLabel(
+        `<span size="x-large" weight="bold">${name}</span>\n${markdownToPango(release.body)}`,
+        [],
+        {
+            use_markup: true,
+            wrap: true,
+            xalign: 0,
+            focusable: false,
+            margin_top: 12, margin_bottom: 12,
+            margin_start: 12, margin_end: 12,
+        }
+    ));
+}
+
+// Release bodies are markdown, only the subset release-please emits gets
+// converted. Each line is escaped first so a body can't break out into
+// markup the GtkLabel would refuse to render.
+function markdownToPango(md) {
+    // Headings need the inline pass too, release-please puts the compare
+    // link right inside the version heading.
+    const inline = text => text
+        .replace(/^(\s*)[*+-]\s+/, '$1• ')
+        .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^()\s]+)\)/g, '<a href="$2">$1</a>');
+    return String(md ?? '').replace(/\r/g, '').split('\n').map(line => {
+        line = GLib.markup_escape_text(line, -1);
+        const heading = line.match(/^#{1,6}\s+(.*)/);
+        if (heading)
+            return `<span weight="bold" size="large">${inline(heading[1])}</span>`;
+        return inline(line);
+    }).join('\n').trim();
 }

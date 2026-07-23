@@ -1,0 +1,68 @@
+/* Static styles for the custom prefs widgets, loaded once by ensurePrefsCss.
+   The .bti-thumbnail-popup rule is appended there. */
+
+.bti-badge {
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 0.78em;
+    font-weight: bold;
+    background-color: alpha(@warning_color, 0.18);
+    color: @warning_color;
+}
+
+.bti-badge.info {
+    background-color: alpha(@accent_color, 0.18);
+    color: @accent_color;
+}
+
+.bti-choice-card {
+    padding: 14px;
+}
+
+.bti-choice-card:checked {
+    box-shadow: inset 0 0 0 2px @accent_bg_color;
+    background-color: alpha(@accent_bg_color, 0.08);
+}
+
+.bti-preview-card {
+    padding: 14px;
+}
+
+.bti-preview-backdrop {
+    background-image: linear-gradient(160deg, alpha(@accent_bg_color, 0.22), alpha(black, 0) 55%),
+                      linear-gradient(160deg, #30303a, #1d1d24);
+    border-radius: 12px;
+    padding: 28px;
+    box-shadow: inset 0 1px 0 alpha(white, 0.07);
+}
+
+.bti-spacing-card {
+    padding: 10px;
+}
+
+.bti-spacing-card spinbutton {
+    min-width: 0;
+}
+
+.bti-spacing-card spinbutton text {
+    min-width: 16px;
+    padding-left: 4px;
+    padding-right: 4px;
+}
+
+.bti-spacing-card spinbutton button {
+    min-width: 18px;
+    padding-left: 3px;
+    padding-right: 3px;
+}
+
+.bti-spacing-highlight {
+    border: 1px dashed alpha(@accent_color, 0.7);
+    background-color: alpha(@accent_bg_color, 0.1);
+    border-radius: 8px;
+}
+
+.bti-spacing-plain {
+    border: 1px solid alpha(currentColor, 0.25);
+    border-radius: 8px;
+}
