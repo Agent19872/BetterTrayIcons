@@ -1,21 +1,30 @@
 import Clutter from 'gi://Clutter';
 import GObject from 'gi://GObject';
 import GLib from 'gi://GLib';
-import St from 'gi://St';
 import * as DND from 'resource:///org/gnome/shell/ui/dnd.js';
-import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {warn, error} from '../../shared/logging.js';
 import {disconnectAll} from '../../shared/lifecycle.js';
 import {isDisposed} from '../utils/actor.js';
-import {
-    DRAG_ACTOR_MAX_SIZE_PX,
-    DRAG_ACTOR_OPACITY,
-    DRAG_SETTING_KEYS,
-} from '../../const.js';
 
-export const DraggableTrayIcon = GObject.registerClass(
-class DraggableTrayIcon extends GObject.Object {
+const DRAG_ACTOR_MAX_SIZE_PX = 48;
+
+const DRAG_ACTOR_OPACITY = 180;
+
+const DRAGGING_SOURCE_OPACITY = 60;
+
+export const DRAG_SETTING_KEYS = Object.freeze([
+    'tray-action-left-long',
+    'tray-action-middle-long',
+    'tray-action-right-long',
+    'tray-action-tap-long',
+]);
+
+export class DraggableTrayIcon extends GObject.Object {
+    static {
+        GObject.registerClass({GTypeName: 'BetterTrayIconsDraggableTrayIcon'}, this);
+    }
+
     _init(actor, appId, clickController, onDragStateChange) {
         super._init();
         this._actor = actor;
@@ -23,8 +32,8 @@ class DraggableTrayIcon extends GObject.Object {
         this._clickController = clickController;
         this._onDragStateChange = onDragStateChange;
 
-        // DND.makeDraggable is deferred until setEnabled(true). Attaching it
-        // eagerly leaves the actor half-grabbed and blocks click events.
+        // Attaching DND.makeDraggable eagerly leaves the actor half-grabbed and
+        // blocks click events, so it waits for setEnabled(true).
         this._enabled = false;
         this._initialized = false;
         this._isDragging = false;
@@ -33,8 +42,7 @@ class DraggableTrayIcon extends GObject.Object {
         if (!this._actor.reactive)
             this._actor.reactive = true;
 
-        // Back-link so callers can find the wrapper via actor._draggableItem
-        // even when DnD is currently disabled.
+        // Back-link so callers reach the wrapper even while DnD is disabled.
         this._actor._draggableItem = this;
     }
 
@@ -64,8 +72,8 @@ class DraggableTrayIcon extends GObject.Object {
         return this._appId;
     }
 
-    // Return a Clutter.Clone so the original St.Bin stays in its container.
-    // Without this, DND would reparent and destroy the source actor.
+    // DND reparents and destroys whatever it gets, so hand it a clone and the
+    // source St.Bin stays in its container.
     getDragActor() {
         if (!this._actor)
             return null;
@@ -86,7 +94,9 @@ class DraggableTrayIcon extends GObject.Object {
             return;
 
         if (this._actor._draggable) {
-            this._actor._draggable.destroy?.();
+            const staleGesture = this._actor._draggable.startGesture;
+            if (staleGesture)
+                this._actor.remove_action(staleGesture);
             this._actor._draggable = null;
         }
 
@@ -128,9 +138,8 @@ class DraggableTrayIcon extends GObject.Object {
                 this._actor.disconnectObject(this._draggable);
         } catch { /* draggable disposed during shell teardown */ }
 
-        // Reset to neutral visuals with plain assignments.
-        // Animating scale on an actor being torn down produced NaN
-        // allocations and crashed the shell.
+        // Plain assignments, no easing: animating scale on an actor being torn
+        // down produced NaN allocations and crashed the shell.
         if (!isDisposed(this._actor)) {
             this._actor.remove_all_transitions();
             this._actor.opacity = 255;
@@ -139,6 +148,12 @@ class DraggableTrayIcon extends GObject.Object {
         }
 
         if (this._actor && !isDisposed(this._actor)) {
+            // makeDraggable attached its start gesture as an actor action and
+            // dnd.js never removes it. Left in place it keeps starting drags
+            // after teardown, one more per re-enable.
+            const gesture = this._draggable?.startGesture;
+            if (gesture)
+                this._actor.remove_action(gesture);
             if (this._actor._delegate === this)
                 this._actor._delegate = null;
             this._actor._draggable = null;
@@ -153,8 +168,8 @@ class DraggableTrayIcon extends GObject.Object {
             return;
         this._draggableSignals.push(
             this._draggable.connect('drag-begin', this._onDragBegin.bind(this)),
-            this._draggable.connect('drag-end', this._onDragEnd.bind(this)),
-            this._draggable.connect('drag-cancelled', this._onDragCancelled.bind(this))
+            this._draggable.connect('drag-end', this._onDragStopped.bind(this)),
+            this._draggable.connect('drag-cancelled', this._onDragStopped.bind(this))
         );
     }
 
@@ -169,20 +184,13 @@ class DraggableTrayIcon extends GObject.Object {
         if (this._clickController?.cancel)
             this._clickController.cancel();
 
-        // DND already paints the dragActor with its own opacity. Easing the
-        // source's scale or opacity here would race against DND's
-        // dragActorMaxSize tween and produce NaN.
+        // Easing the source's scale or opacity here races DND's dragActorMaxSize
+        // tween and produces NaN.
         if (this._onDragStateChange)
             this._onDragStateChange(true);
     }
 
-    _onDragEnd(_draggable, _time, _success) {
-        this._isDragging = false;
-        if (this._onDragStateChange)
-            this._onDragStateChange(false);
-    }
-
-    _onDragCancelled() {
+    _onDragStopped() {
         this._isDragging = false;
         if (this._onDragStateChange)
             this._onDragStateChange(false);
@@ -207,96 +215,16 @@ class DraggableTrayIcon extends GObject.Object {
         this._clickController = null;
         this._onDragStateChange = null;
     }
-});
-
-// Floating drop marker. Lives in Main.layoutManager.uiGroup so it can move
-// during drag without mutating any container's child list. Mutating actor
-// children while DND iterates crashed the shell (g_hash_table_iter_next
-// version-mismatch assertion in the past).
-export class DragPlaceholder {
-    constructor() {
-        this._actor = null;
-    }
-
-    _ensureActor() {
-        if (this._actor)
-            return this._actor;
-        this._actor = new St.Widget({
-            width: 3,
-            height: 24,
-            reactive: false,
-            style: 'background-color: rgba(255,255,255,0.9); border-radius: 2px;',
-            visible: false,
-        });
-        Main.layoutManager.uiGroup.add_child(this._actor);
-        return this._actor;
-    }
-
-    // `items` carry an `.actor` in render order. `targetIndex` is the
-    // position the marker points to.
-    showAt(items, targetIndex) {
-        if (items.length === 0) {
-            this.hide();
-            return;
-        }
-
-        const placeholder = this._ensureActor();
-
-        let px, py, height;
-        try {
-            if (targetIndex < items.length) {
-                const [cx, cy] = items[targetIndex].actor.get_transformed_position();
-                const [, ch] = items[targetIndex].actor.get_transformed_size();
-                px = cx - 2;
-                py = cy;
-                height = ch;
-            } else {
-                const last = items[items.length - 1].actor;
-                const [cx, cy] = last.get_transformed_position();
-                const [cw, ch] = last.get_transformed_size();
-                px = cx + cw - 1;
-                py = cy;
-                height = ch;
-            }
-        } catch {
-            // Target actor disposed mid-drag.
-            this.hide();
-            return;
-        }
-
-        placeholder.set_position(Math.round(px), Math.round(py));
-        placeholder.set_size(3, Math.round(height));
-        placeholder.visible = true;
-
-        // Each menu.open raises the popup actor inside uiGroup, so on
-        // subsequent drags the placeholder would render behind the popup.
-        // Re-raise on every motion event, which is cheap.
-        const parent = placeholder.get_parent();
-        if (parent) {
-            try {
-                parent.set_child_above_sibling(placeholder, null);
-            } catch { /* parent gone mid-drag */ }
-        }
-    }
-
-    hide() {
-        if (this._actor)
-            this._actor.visible = false;
-    }
-
-    destroy() {
-        if (this._actor) {
-            this.hide();
-            this._actor.destroy();
-            this._actor = null;
-        }
-    }
 }
 
-export function isDragEnabledFromSettings(settings) {
+function isDragEnabledFromSettings(settings) {
     if (!settings)
         return false;
     return DRAG_SETTING_KEYS.some(k => settings.get_string(k) === 'drag-drop');
+}
+
+export function syncDragEnabled(draggable, settings) {
+    draggable?.setEnabled(isDragEnabledFromSettings(settings));
 }
 
 export function setupIconDragSource({
@@ -304,25 +232,29 @@ export function setupIconDragSource({
     appId,
     settings,
     label = appId,
-    clickController = null,
-    onLocalDragStateChange = null,
+    tooltip = null,
     onForwardedDragStateChange = null,
 }) {
     let draggable;
     try {
-        draggable = new DraggableTrayIcon(actor, appId, clickController, isDragging => {
-            onLocalDragStateChange?.(isDragging);
+        draggable = new DraggableTrayIcon(actor, appId, null, isDragging => {
+            if (!isDisposed(actor)) {
+                actor.opacity = isDragging ? DRAGGING_SOURCE_OPACITY : 255;
+                // Hide on both begin and end, because notify::hover doesn't
+                // re-fire after a drag ends if the pointer never left the icon.
+                // A tooltip shown before would stick.
+                tooltip?.hide();
+            }
             onForwardedDragStateChange?.(isDragging);
         });
     } catch (e) {
         warn(`setupIconDragSource: init failed for ${label}: ${e.message}`);
         return null;
     }
-    draggable.setEnabled(isDragEnabledFromSettings(settings));
+    syncDragEnabled(draggable, settings);
     return draggable;
 }
 
-// Opens the overflow popup at drag start, closes it at drag end.
 export function forwardDragStateToIndicator(indicator) {
     return isDragging => {
         if (!indicator)

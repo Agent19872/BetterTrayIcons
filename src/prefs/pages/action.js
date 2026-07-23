@@ -2,22 +2,29 @@ import Adw from 'gi://Adw';
 import GObject from 'gi://GObject';
 import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-import {createComplexActionRow, createComboRow} from '../widgets/rows.js';
-import ActionConfigWidget from '../widgets/actionConfigWidget.js';
+import {createComplexActionRow, createComboRow, createActionRow, createResetButton, GEAR_ICON_NAME} from '../widgets/rows.js';
+import {createIconButton} from '../widgets/gtkHelpers.js';
+import ConfigDialog from '../dialogs/configDialog.js';
+import {TOUCH_BINDING} from '../../const.js';
+
+// Every click, tap and scroll binding shares these prefixes, including the
+// gear dialog keys, so a future binding resets without a list edit.
+const ACTION_KEY_PREFIXES = Object.freeze(['tray-action-', 'toggle-action-']);
 
 export class ActionPage extends Adw.PreferencesPage {
     static {
-        GObject.registerClass(this);
+        GObject.registerClass({GTypeName: 'BetterTrayIconsActionPage'}, this);
     }
 
     _init(window, settings) {
         super._init({
             title: _('Actions'),
-            icon_name: 'preferences-other-symbolic',
+            icon_name: 'bti-actions-symbolic',
         });
 
         this._window = window;
         this._settings = settings;
+        this._headerActions = null;
 
         this._clickButtons = [
             {label: _('Left Click'),   suffix: 'left'},
@@ -42,6 +49,20 @@ export class ActionPage extends Adw.PreferencesPage {
 
         this._createTrayClickGroup();
         this._createToggleClickGroup();
+    }
+
+    get headerActions() {
+        this._headerActions ??= createResetButton(this._settings, this._actionKeys(),
+            {window: this._window, includesSubpages: true});
+        return this._headerActions;
+    }
+
+    _actionKeys() {
+        return [
+            ...this._settings.list_keys().filter(key =>
+                ACTION_KEY_PREFIXES.some(prefix => key.startsWith(prefix))),
+            'toggle-hover-menu',
+        ];
     }
 
     _createTrayClickGroup() {
@@ -73,6 +94,15 @@ export class ActionPage extends Adw.PreferencesPage {
         });
 
         group.add(createComboRow(
+            _('Scroll'),
+            _('Scroll direction picks which way the icons rotate'),
+            this._settings,
+            'toggle-action-scroll',
+            [_('Cycle Icons'), _('None')],
+            ['cycle', 'nothing']
+        ));
+
+        group.add(createComboRow(
             _('Menu on Hover'),
             _('Which menu opens when you hover the toggle button'),
             this._settings,
@@ -85,18 +115,44 @@ export class ActionPage extends Adw.PreferencesPage {
     _addClickRows(group, {keyPrefix, options, values, longOptions, longValues}) {
         this._clickButtons.forEach(({label, suffix}) => {
             const key = `${keyPrefix}-${suffix}`;
-            const advData = {
-                pageTitle: label,
-                groupTitle: _('Advanced'),
+            const groups = [{
+                title: _('Advanced'),
                 configs: [
                     {type: 'combo', title: _('Double Click'), key: `${key}-double`, options,     values},
                     {type: 'combo', title: _('Long Press'),   key: `${key}-long`,   options: longOptions, values: longValues},
                 ],
-            };
+            }];
+
             group.add(createComplexActionRow(
                 label, null, this._settings, key,
-                options, values, this._window, ActionConfigWidget, advData
+                options, values, this._window, ConfigDialog,
+                {pageTitle: label, groups}
             ));
+        });
+
+        group.add(this._createTouchRow(keyPrefix, {options, values, longOptions, longValues}));
+    }
+
+    // Touch has no primary binding a dropdown could show, all three live in
+    // the dialog.
+    _createTouchRow(keyPrefix, {options, values, longOptions, longValues}) {
+        const openDialog = () => new ConfigDialog(this._window, this._settings, {
+            pageTitle: _('Touch'),
+            groups: [{
+                configs: [
+                    {type: 'combo', title: _('Tap'),        key: `${keyPrefix}-${TOUCH_BINDING}`, options, values},
+                    {type: 'combo', title: _('Double Tap'), key: `${keyPrefix}-${TOUCH_BINDING}-double`, options, values},
+                    {type: 'combo', title: _('Long Touch'), key: `${keyPrefix}-${TOUCH_BINDING}-long`, options: longOptions, values: longValues},
+                ],
+            }],
+        }).present(this._window);
+
+        return createActionRow(_('Touch'), _('Tap, double tap and long touch.'), {
+            suffixWidgets: [createIconButton(GEAR_ICON_NAME, {
+                tooltip_text: _('Configure'),
+                callback: openDialog,
+            })],
+            onActivate: openDialog,
         });
     }
 }

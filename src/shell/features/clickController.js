@@ -2,12 +2,16 @@ import GLib from 'gi://GLib';
 import Clutter from 'gi://Clutter';
 
 import {clearIds, disconnectAll, removeTimer} from '../../shared/lifecycle.js';
+import {warnOnce} from '../../shared/logging.js';
 import {isDisposed} from '../utils/actor.js';
-import {
-    LONG_PRESS_TIMEOUT_MS,
-    DOUBLE_CLICK_MAX_DELAY_MS,
-    DND_DRAG_THRESHOLD_PX,
-} from '../../const.js';
+import {TOUCH_BINDING} from '../../const.js';
+
+const LONG_PRESS_TIMEOUT_MS = 600;
+
+const DOUBLE_CLICK_MAX_DELAY_MS = 250;
+
+// Matches GTK's default drag threshold.
+const DND_DRAG_THRESHOLD_PX = 8;
 
 export class ClickController {
     constructor(actor, settings, keyPrefix, onAction, options = {}) {
@@ -21,7 +25,9 @@ export class ClickController {
             longPressId: 0,
             doubleClickId: 0,
             isLongPress: false,
+            buttonDown: false,
             lastClickTime: 0,
+            lastBinding: null,
             clickCount: 0,
             pressStartX: 0,
             pressStartY: 0,
@@ -43,53 +49,76 @@ export class ClickController {
         connect('button-press-event', this._onPress.bind(this));
         connect('button-release-event', this._onRelease.bind(this));
         connect('motion-event', this._onMotion.bind(this));
+        connect('touch-event', this._onTouch.bind(this));
         connect('destroy', () => this.destroy());
     }
 
-    _onPress(actor, event) {
-        const button = event.get_button();
+    // Clutter emulates no pointer for touch, so a tap reaches none of the
+    // handlers above. Touch has no buttons either, hence its own binding.
+    _onTouch(actor, event) {
+        switch (event.type()) {
+        case Clutter.EventType.TOUCH_BEGIN:
+            return this._onPress(actor, event, TOUCH_BINDING);
+        case Clutter.EventType.TOUCH_UPDATE:
+            return this._onMotion(actor, event);
+        case Clutter.EventType.TOUCH_END:
+            return this._onRelease(actor, event, TOUCH_BINDING);
+        case Clutter.EventType.TOUCH_CANCEL:
+            this.cancel();
+            return Clutter.EVENT_PROPAGATE;
+        default:
+            return Clutter.EVENT_PROPAGATE;
+        }
+    }
+
+    _onPress(actor, event, binding = _bindingOf(event.get_button())) {
         const eventTime = event.get_time();
         const doubleClickTime = this._getDoubleClickTime();
         const [x, y] = event.get_coords();
 
         this._state.pressStartX = x;
         this._state.pressStartY = y;
+        this._state.buttonDown = true;
 
-        if (this._state.lastClickTime > 0 && (eventTime - this._state.lastClickTime) < doubleClickTime)
+        // Alternating buttons within the window is two singles, not a double.
+        if (this._state.lastClickTime > 0 &&
+            (eventTime - this._state.lastClickTime) < doubleClickTime &&
+            binding === this._state.lastBinding)
             this._state.clickCount = 2;
         else
             this._state.clickCount = 1;
 
         this._state.lastClickTime = eventTime;
+        this._state.lastBinding = binding;
         this._state.isLongPress = false;
 
-        clearIds(this._state, removeTimer, 'doubleClickId');
+        clearIds(this._state, removeTimer, 'doubleClickId', 'longPressId');
 
         if (this._state.clickCount === 1) {
-            clearIds(this._state, removeTimer, 'longPressId');
-
-            this._state.longPressId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, LONG_PRESS_TIMEOUT_MS, () => {
+            const longPressMs = _gestureSetting('long_press_duration', LONG_PRESS_TIMEOUT_MS);
+            this._state.longPressId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, longPressMs, () => {
                 this._state.isLongPress = true;
                 this._state.longPressId = 0;
-                this._triggerAction(button, 'long');
+                this._triggerAction(binding, 'long');
                 return GLib.SOURCE_REMOVE;
             });
-        } else {
-            clearIds(this._state, removeTimer, 'longPressId');
         }
 
         return this._propagate ? Clutter.EVENT_PROPAGATE : Clutter.EVENT_STOP;
     }
 
     _onMotion(actor, event) {
-        if (this._state.clickCount === 0 || this._state.isLongPress)
+        // After a release the click may still sit on the double-click decision
+        // timer, and pointer travel must not swallow it.
+        if (!this._state.buttonDown || this._state.isLongPress)
             return Clutter.EVENT_PROPAGATE;
 
         const [x, y] = event.get_coords();
         const dx = Math.abs(x - this._state.pressStartX);
         const dy = Math.abs(y - this._state.pressStartY);
 
-        if (dx > DND_DRAG_THRESHOLD_PX || dy > DND_DRAG_THRESHOLD_PX) {
+        const threshold = _gestureSetting('dnd_drag_threshold', DND_DRAG_THRESHOLD_PX);
+        if (dx > threshold || dy > threshold) {
             // Cancel internal click timers only. Releasing the pointer grab
             // here would break DnD on GNOME Shell 45+.
             this.cancel();
@@ -98,8 +127,8 @@ export class ClickController {
         return Clutter.EVENT_PROPAGATE;
     }
 
-    _onRelease(actor, event) {
-        const button = event.get_button();
+    _onRelease(actor, event, binding = _bindingOf(event.get_button())) {
+        this._state.buttonDown = false;
 
         const [x, y] = event.get_coords();
         const [success, localX, localY] = actor.transform_stage_point(x, y);
@@ -121,31 +150,33 @@ export class ClickController {
         }
 
         if (count === 1)
-            this._onSingleClickRelease(button);
+            this._onSingleClickRelease(binding);
         else if (count === 2)
-            this._onDoubleClickRelease(button);
+            this._onDoubleClickRelease(binding);
         else
             this._state.clickCount = 0;
 
         return this._propagate ? Clutter.EVENT_PROPAGATE : Clutter.EVENT_STOP;
     }
 
-    _onSingleClickRelease(button) {
-        const buttonName = this._getButtonName(button);
-        const doubleKey = `${this._prefix}-action-${buttonName}-double`;
+    _onSingleClickRelease(binding) {
+        const doubleKey = `${this._prefix}-action-${binding}-double`;
         const doubleAction = this._settings.get_string(doubleKey);
 
         const hasDoubleAction = doubleAction && doubleAction !== 'nothing';
 
         if (!hasDoubleAction) {
-            this._triggerAction(button, 'single');
+            this._triggerAction(binding, 'single');
             this._state.clickCount = 0;
+            // Otherwise the next fast click counts as a double and feeds an
+            // action that is not configured, swallowing the click.
+            this._state.lastClickTime = 0;
         } else {
             const delay = this._getDoubleClickTime();
 
             this._state.doubleClickId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
                 this._state.doubleClickId = 0;
-                this._triggerAction(button, 'single');
+                this._triggerAction(binding, 'single');
                 this._state.clickCount = 0;
                 this._state.lastClickTime = 0;
                 return GLib.SOURCE_REMOVE;
@@ -153,35 +184,26 @@ export class ClickController {
         }
     }
 
-    _onDoubleClickRelease(button) {
+    _onDoubleClickRelease(binding) {
         clearIds(this._state, removeTimer, 'doubleClickId');
 
-        this._triggerAction(button, 'double');
+        this._triggerAction(binding, 'double');
 
         this._state.clickCount = 0;
         this._state.lastClickTime = 0;
     }
 
+    // Capped: the system value is tuned for opening files, and waiting that
+    // long before firing a single click makes the tray feel unresponsive.
     _getDoubleClickTime() {
-        const shellSettings = Clutter.Settings.get_default();
-        let val = shellSettings ? shellSettings.double_click_time : DOUBLE_CLICK_MAX_DELAY_MS;
-        if (val > DOUBLE_CLICK_MAX_DELAY_MS)
-            val = DOUBLE_CLICK_MAX_DELAY_MS;
-        return val;
+        return Math.min(
+            _gestureSetting('double_click_time', DOUBLE_CLICK_MAX_DELAY_MS),
+            DOUBLE_CLICK_MAX_DELAY_MS
+        );
     }
 
-    _getButtonName(button) {
-        if (button === 2)
-            return 'middle';
-        if (button === 3)
-            return 'right';
-        return 'left';
-    }
-
-    _triggerAction(button, type) {
-        const buttonName = this._getButtonName(button);
-
-        let key = `${this._prefix}-action-${buttonName}`;
+    _triggerAction(binding, type) {
+        let key = `${this._prefix}-action-${binding}`;
         if (type === 'double')
             key += '-double';
         if (type === 'long')
@@ -196,6 +218,7 @@ export class ClickController {
     cancel() {
         clearIds(this._state, removeTimer, 'longPressId', 'doubleClickId');
         this._state.isLongPress = false;
+        this._state.buttonDown = false;
         this._state.clickCount = 0;
         this._state.lastClickTime = 0;
     }
@@ -206,5 +229,27 @@ export class ClickController {
             disconnectAll(this, this._actor, '_signals');
         this._signals = [];
         this._actor = null;
+    }
+}
+
+function _bindingOf(button) {
+    if (button === 2)
+        return 'middle';
+    if (button === 3)
+        return 'right';
+    return 'left';
+}
+
+// These thresholds track the user's accessibility settings, so reading them
+// beats a literal. Clutter.Settings.get_default() has been deprecated since
+// mutter 47, so a removal has to degrade to the fallback rather than throw
+// into a click handler.
+function _gestureSetting(property, fallback) {
+    try {
+        const value = Clutter.Settings.get_default()?.[property];
+        return typeof value === 'number' && value > 0 ? value : fallback;
+    } catch {
+        warnOnce(`gesture:${property}`, `Clutter.Settings is gone, using the built-in ${property} fallback`);
+        return fallback;
     }
 }
