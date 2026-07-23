@@ -1,0 +1,4 @@
+<!-- Derived from Lucide "chevron-right" (stroke outlined to fill). ISC - Copyright (c) 2026 Lucide Icons and Contributors -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" version="1.1">
+	<path d="M 8.804 5 C 8.362 5, 8 5.313, 8 5.695 C 8 6.078, 9.209 7.653, 10.687 9.195 L 13.374 12 10.510 14.990 C 8.935 16.634, 7.965 18.299, 8.356 18.690 C 8.747 19.080, 10.723 17.743, 12.748 15.719 L 16.429 12.038 13.018 8.519 C 11.142 6.583, 9.246 5, 8.804 5" stroke="none" fill="#000" fill-rule="evenodd"/>
+</svg>
