@@ -36,10 +36,12 @@ jobs:
 
           if [[ -n "$tag" ]]; then
             uuid=$(jq -r .uuid metadata.json)
+            name=$(jq -r .name metadata.json)
             {
               echo "is_release=true"
               echo "tag=${tag}"
               echo "uuid=${uuid}"
+              echo "name=${name}"
             } >> "$GITHUB_OUTPUT"
             echo "Detected release commit, tag: ${tag}"
           else
@@ -93,6 +95,17 @@ jobs:
           done
           echo "::error::Release $TAG was not created within 5 minutes"
           exit 1
+
+      - name: Title the release after the extension
+        if: steps.check.outputs.is_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.check.outputs.tag }}
+          REPO: ${{ github.repository }}
+          NAME: ${{ steps.check.outputs.name }}
+        # Release Please titles the release with the bare version. The name
+        # comes from metadata.json so a rename carries through by itself.
+        run: gh release edit "$TAG" --repo "$REPO" --title "${NAME} ${TAG#v}"
 
       - name: Attach asset to release
         if: steps.check.outputs.is_release == 'true'
