@@ -78,7 +78,11 @@ export default class BetterTrayIconsExtension extends Extension {
             this._backgroundAppsProxyWatcher = new BackgroundAppsProxyWatcher(this._settings, this._indicator);
             this._backgroundAppsProxyWatcher.enable();
         } catch (e) {
+            // The idle_add puts this outside the shell's own enable error
+            // handling, so nothing else would tear down what got built
+            // before the throw.
             error(`Fatal Error during enable: ${e.message}`, e);
+            this.disable();
         }
     }
 

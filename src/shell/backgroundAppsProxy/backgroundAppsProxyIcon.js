@@ -118,7 +118,7 @@ export class BackgroundAppsProxyIcon {
 
     _activate() {
         this._app.activate();
-        this._onAfterClick?.();
+        this._onAfterClick();
     }
 
     _openMenu() {
@@ -172,7 +172,7 @@ export class BackgroundAppsProxyIcon {
                 return;
             }
         }
-        this._onQuit?.();
+        this._onQuit();
     }
 
     _applyConfig() {

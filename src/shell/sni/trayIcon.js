@@ -204,7 +204,7 @@ export class TrayIcon {
     }
 
     _swallow(promise, label) {
-        promise?.catch?.(e => warn(`${label} failed for ${this.id}: ${e.message}`));
+        promise.catch(e => warn(`${label} failed for ${this.id}: ${e.message}`));
     }
 
     // A resetting debounce would starve on apps that emit NewIcon faster than
@@ -285,12 +285,12 @@ export class TrayIcon {
 
         switch (action) {
         case 'activate':
-            this._proxy?.ActivateRemote(0, 0);
-            this._onCloseMenu?.();
+            this._proxy.ActivateRemote(0, 0);
+            this._onCloseMenu();
             break;
         case 'secondary':
-            this._proxy?.SecondaryActivateRemote(0, 0);
-            this._onCloseMenu?.();
+            this._proxy.SecondaryActivateRemote(0, 0);
+            this._onCloseMenu();
             break;
         case 'menu':
             // The click that closes a popup also fires here, which would
@@ -499,7 +499,7 @@ export class TrayIcon {
     }
 
     _fallbackToRemoteContextMenu() {
-        if (!this._proxy?.ContextMenuRemote)
+        if (!this._proxy)
             return;
         const [x, y] = global.get_pointer();
         this._proxy.ContextMenuRemote(x, y);
@@ -595,7 +595,7 @@ export class TrayIcon {
             this.actor.destroy();
         this.actor = null;
 
-        this._onDestroy?.(this.id);
+        this._onDestroy(this.id);
         this._proxy = null;
     }
 }

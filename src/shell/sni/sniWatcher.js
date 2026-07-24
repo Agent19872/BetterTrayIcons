@@ -80,6 +80,7 @@ export class SniWatcher {
             );
         } catch (e) {
             error('SniWatcher: Failed to enable', e);
+            this.disable();
         }
     }
 
@@ -262,7 +263,7 @@ export class SniWatcher {
                     proxy,
                     (itemId, actor) => this._indicator.addIcon(itemId, actor),
                     itemId => this._onItemDestroyed(itemId),
-                    () => this._indicator?._handleIconClick?.(),
+                    () => this._indicator._handleIconClick(),
                     forwardDragStateToIndicator(this._indicator)
                 );
 

@@ -1,6 +1,5 @@
 import Clutter from 'gi://Clutter';
 import GObject from 'gi://GObject';
-import GLib from 'gi://GLib';
 import * as DND from 'resource:///org/gnome/shell/ui/dnd.js';
 
 import {warn, error} from '../../shared/logging.js';
@@ -199,7 +198,7 @@ export class DraggableTrayIcon extends GObject.Object {
     _cancelActiveDrag() {
         if (!this._draggable || !this._isDragging)
             return;
-        const time = global.get_current_time?.() ?? GLib.get_monotonic_time() / 1000;
+        const time = global.get_current_time();
         this._draggable._cancelDrag?.(time);
     }
 
@@ -257,11 +256,9 @@ export function setupIconDragSource({
 
 export function forwardDragStateToIndicator(indicator) {
     return isDragging => {
-        if (!indicator)
-            return;
         if (isDragging)
-            indicator._onAnyDragBegin?.();
+            indicator._onAnyDragBegin();
         else
-            indicator._onAnyDragEnd?.();
+            indicator._onAnyDragEnd();
     };
 }

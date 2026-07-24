@@ -99,7 +99,7 @@ export class XEmbedTrayIcon {
                 this.actor.remove_style_pseudo_class('active');
                 const isRightClick = event.get_button() === 3;
                 this._forwardClick(event, isRightClick);
-                this._onAfterClick?.();
+                this._onAfterClick();
                 return Clutter.EVENT_PROPAGATE;
             }),
             this.actor.connect('leave-event', () => {
@@ -248,7 +248,7 @@ export class XEmbedTrayIcon {
         disconnectAll(this, this.actor, '_actorSignals');
         disconnectSignal(this, this._icon, '_sigIconDestroy');
 
-        this._onDestroy?.(this.id);
+        this._onDestroy(this.id);
 
         if (!isDisposed(this.actor))
             this.actor.destroy();

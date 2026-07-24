@@ -170,7 +170,7 @@ export class BackgroundAppsProxyWatcher {
     _coveredAppIds() {
         const mine = new Set([...this._icons.values()].map(icon => icon.actor));
         const covered = new Set();
-        for (const actor of this._panelIndicator?._icons?.values() ?? []) {
+        for (const actor of this._panelIndicator._icons.values()) {
             if (actor?._appId && !mine.has(actor) && !isDisposed(actor))
                 covered.add(actor._appId);
         }
@@ -223,7 +223,7 @@ export class BackgroundAppsProxyWatcher {
 
     _addIcon(appId, entry) {
         const icon = new BackgroundAppsProxyIcon(appId, entry, this._settings, {
-            onAfterClick: () => this._panelIndicator?._handleIconClick?.(),
+            onAfterClick: () => this._panelIndicator._handleIconClick(),
             onDragStateChange: forwardDragStateToIndicator(this._panelIndicator),
             // The portal goes on listing the app it just lost, so without this
             // the icon the user quit sits there until the portal catches up.
