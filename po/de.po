@@ -877,3 +877,15 @@ msgstr "Abstände"
 
 msgid "App settings are merged; other settings are taken from the file."
 msgstr "App-Einstellungen werden zusammengeführt, andere aus der Datei übernommen."
+
+msgid "Define"
+msgstr "Festlegen"
+
+msgid "Resting State"
+msgstr "Ruhezustand"
+
+msgid "Resting state updated."
+msgstr "Ruhezustand festgelegt."
+
+msgid "Takes what the app shows right now as its calm look."
+msgstr "Übernimmt das aktuelle Bild der App als ihren Ruhezustand."

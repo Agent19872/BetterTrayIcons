@@ -1,17 +1,16 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
-import GdkPixbuf from 'gi://GdkPixbuf';
 
 import {warnOnce} from './logging.js';
-import {fileExists, readFileBytes, probePaths} from './fetch.js';
+import {fileExists, readFileBytes, readFileText, probePaths} from './fetch.js';
 
 // symbolic is the freedesktop convention, panel the Ubuntu/ayatana one.
 const MONO_ICON_SUFFIXES = Object.freeze(['-symbolic', '-panel']);
+const MONO_VARIANTS = MONO_ICON_SUFFIXES.map(s => s.slice(1)).join('|');
 
 // Bare "mono" marks monochrome assets without being a theme variant
 // suffix, so it isn't in the list above.
-const MONO_ICON_NAME_RE = new RegExp(
-    `[-_](${MONO_ICON_SUFFIXES.map(s => s.slice(1)).join('|')}|mono)$`, 'i');
+const MONO_ICON_NAME_RE = new RegExp(`[-_](${MONO_VARIANTS}|mono)$`, 'i');
 
 // Fallback-asset names like steam_tray_mono, from apps without theme
 // integration. Stripping them reveals the base name a theme can cover,
@@ -258,26 +257,49 @@ export function pathOrThemedIcon(value, exists = null) {
     return themedIcon(value);
 }
 
-// Big enough that the baked raster stays crisp when scaled down to any tray or
-// preview size.
-const RECOLOR_RENDER_PX = 256;
+// Below this HSV saturation a declared color counts as neutral and follows the
+// tint, brand colors sit well above the line.
+const TINT_SAT_THRESHOLD = 0.25;
 
-// Below this HSV saturation a pixel is neutral (white/black/gray) and takes the
-// tint. Brand colors sit well above it, so green/red/blue survive.
-const RECOLOR_SAT_THRESHOLD = 0.25;
+// `color` is in here because it is what currentColor resolves to, and the KDE
+// convention keeps every chromatic value there.
+const DECLARED_COLOR_RE = /(?:fill|stroke|stop-color|color)\s*[:=]\s*["']?\s*(#[0-9a-f]{3,8}|rgba?\([^)]*\))/gi;
 
-// Ignore the fully transparent background when deciding if anything chromatic
-// is worth protecting.
-const RECOLOR_MIN_ALPHA = 40;
+// KDE paints an ordinary icon part with the text class and keeps the semantic
+// ones (PositiveText, NegativeText) for status, so only the text one may take
+// the tint. Papirus files a brand color under it, which is why it is checked
+// before being repainted.
+const COLOR_SCHEME_PREFIX = 'ColorScheme-';
+const COLOR_SCHEME_TEXT_CLASS = `${COLOR_SCHEME_PREFIX}Text`;
+const COLOR_SCHEME_TEXT_RE = new RegExp(
+    `\\.${COLOR_SCHEME_TEXT_CLASS}\\s*\\{[^}]*?color\\s*:\\s*(#[0-9a-f]{3,8}|rgba?\\([^)]*\\))`, 'i');
 
-// The -symbolic suffix signals recolor intent. St and GTK both flatten such a
-// file to a single foreground, which destroys a multi-color status icon (green
-// circle and white check collapse to one color), and their live recoloring is
-// inconsistent across render paths and versions. So we bake the recolor
-// ourselves: chromatic pixels keep their color, neutral ones take the tint. The
-// result is a plain raster both toolkits render identically.
-export function isSymbolicName(path) {
-    return typeof path === 'string' && /-symbolic\.(svg|png)$/i.test(path);
+// Only parts naming no color take the tint. Without the inherit rule the
+// children of a `<g fill>` group lose theirs.
+const _tintColoredCss = (color, neutralText) =>
+    `svg{color:${color}}*:not([fill]){fill:${color}}[fill] *{fill:inherit}${neutralText
+        ? `.${COLOR_SCHEME_TEXT_CLASS},.foreground,.foreground-fill{color:${color};fill:${color}}`
+        : ''}`;
+
+// Nothing chromatic to protect, so the tint wins everywhere. fill="none" is
+// spared because forcing a fill onto a stroke-drawn outline paints it as a
+// solid blob, and the stroke takes the tint as well, which neither toolkit does.
+const _tintMonoCss = color =>
+    `*{fill:${color}!important;color:${color}}` +
+    '[fill="none"]{fill:none!important}' +
+    `[stroke]:not([stroke="none"]){stroke:${color}!important}`;
+
+// Both toolkits classify by file name alone (st-icon-theme.c
+// icon_uri_is_symbolic), so a mono icon under a plain name renders black.
+// Matching none of the three leaves the icon's own paint alone, which is what
+// keeps grayscale logos intact.
+const MONO_NAME_RE = new RegExp(`-(${MONO_VARIANTS})\\.svg$`, 'i');
+const MONO_DIR_RE = new RegExp(`/(${MONO_VARIANTS})/`);
+const MONO_CLASS_RE = new RegExp(
+    `currentColor|${COLOR_SCHEME_PREFIX}|class\\s*=\\s*["'](?:fg|foreground|success|warning|error)`, 'i');
+
+function _wantsTint(path, text) {
+    return MONO_NAME_RE.test(path) || MONO_DIR_RE.test(path) || MONO_CLASS_RE.test(text);
 }
 
 // The color neutral parts take, matching a normal symbolic tray icon. The
@@ -291,107 +313,179 @@ export function symbolicTint(settings, accentColor = null) {
     return settings.get_string('icon-color');
 }
 
-// Baked icons live only in memory, keyed by path and tint, so the panel never
-// writes to the SSD and there is no cache file to leak.
-const _recolorCache = new Map();
+// Tinted bytes live only in memory, so the panel never writes to the SSD.
+// Dropping the whole map on overflow costs one cheap rebuild instead of LRU
+// bookkeeping, and a failed read is kept as null so no render retries it.
+const TINT_CACHE_MAX = 128;
+const _tintCache = new Map();
 
-// Null tells the caller to keep its plain FileIcon: not a -symbolic file, or
-// unreadable. Monochrome files are baked too, because the toolkit's own
-// symbolic rendering drops fill-rule cutouts and paints them as a solid blob.
-// Async so the file read never blocks the compositor.
-export async function recolorSymbolicFile(path, tint, cancellable = null) {
-    if (!isSymbolicName(path))
+// A themed NAME carries no bytes, so the caller hands in its own toolkit's
+// lookup. size is in DEVICE pixels, 0 leaves the file's own size alone.
+export async function tintedSymbolicIcon(value, tint, {size = 0, lookupThemeFile = null, cancellable = null} = {}) {
+    const path = typeof value === 'string' && value.startsWith('/')
+        ? value
+        : lookupThemeFile?.(value) ?? null;
+    const color = _cssColor(tint);
+    // Only an SVG has somewhere to put a stylesheet.
+    if (!color || !path?.toLowerCase().endsWith('.svg'))
         return null;
-    const key = `${path}\0${tint}`;
-    if (_recolorCache.has(key))
-        return _recolorCache.get(key);
-    const gicon = await _bakeRecoloredIcon(path, tint, cancellable);
-    _recolorCache.set(key, gicon);
+
+    const key = `${path}\0${color}\0${size}`;
+    if (_tintCache.has(key))
+        return _tintCache.get(key);
+
+    const gicon = await _tintedIcon(path, color, size, cancellable);
+    if (_tintCache.size >= TINT_CACHE_MAX)
+        _tintCache.clear();
+    _tintCache.set(key, gicon);
     return gicon;
 }
 
-export function clearRecolorCache() {
-    _recolorCache.clear();
+export function clearTintCache() {
+    _tintCache.clear();
 }
 
-// tint -> gicon per path for the -symbolic file icons among configs, for a
-// caller that renders many rows at once. Absent paths fall back to FileIcon.
-export async function recolorSymbolicIconMap(configs, tint, cancellable = null) {
-    const paths = new Set();
-    for (const config of configs) {
-        if (isSymbolicName(config?.custom_icon))
-            paths.add(config.custom_icon);
-    }
+export async function tintedSymbolicIconMap(values, tint, options = {}) {
     const map = new Map();
-    await Promise.all([...paths].map(async path => {
-        const gicon = await recolorSymbolicFile(path, tint, cancellable);
+    await Promise.all([...new Set(values)].map(async value => {
+        const gicon = await tintedSymbolicIcon(value, tint, options);
         if (gicon)
-            map.set(path, gicon);
+            map.set(value, gicon);
     }));
     return map;
 }
 
-async function _bakeRecoloredIcon(path, tint, cancellable) {
-    const rgb = _parseRgb(tint);
-    if (!rgb)
-        return null;
+async function _tintedIcon(path, color, size, cancellable) {
     try {
-        const bytes = await readFileBytes(Gio.File.new_for_path(path), cancellable);
-        if (!bytes?.length)
+        const text = await readFileText(Gio.File.new_for_path(path), cancellable);
+        if (!_wantsTint(path, text))
             return null;
-        const stream = Gio.MemoryInputStream.new_from_bytes(GLib.Bytes.new(bytes));
-        const pixbuf = GdkPixbuf.Pixbuf.new_from_stream_at_scale(
-            stream, RECOLOR_RENDER_PX, RECOLOR_RENDER_PX, true, cancellable).add_alpha(false, 0, 0, 0);
-
-        // get_pixels returns a copy here, so mutate it and build a fresh pixbuf
-        // from the bytes rather than expecting the writes to land in place.
-        const data = pixbuf.get_pixels();
-        const stride = pixbuf.get_rowstride();
-        const [width, height] = [pixbuf.get_width(), pixbuf.get_height()];
-        _recolorNeutralPixels(data, stride, width, height, rgb);
-
-        const recolored = GdkPixbuf.Pixbuf.new_from_bytes(
-            GLib.Bytes.new(data), GdkPixbuf.Colorspace.RGB, true, 8, width, height, stride);
-        const [ok, png] = recolored.save_to_bufferv('png', [], []);
-        return ok && png?.length ? Gio.BytesIcon.new(GLib.Bytes.new(png)) : null;
+        const svg = _tintedSvg(text, color, size);
+        return svg
+            ? Gio.BytesIcon.new(GLib.Bytes.new(new TextEncoder().encode(svg)))
+            : null;
     } catch {
         return null;
     }
 }
 
-// Recolors neutral pixels to rgb, keeping their alpha so anti-aliased edges
-// tint smoothly. Chromatic pixels are left untouched.
-function _recolorNeutralPixels(data, stride, width, height, [tr, tg, tb]) {
-    for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-            const o = y * stride + x * 4;
-            if (data[o + 3] < RECOLOR_MIN_ALPHA)
-                continue;
-            const max = Math.max(data[o], data[o + 1], data[o + 2]);
-            const min = Math.min(data[o], data[o + 1], data[o + 2]);
-            if (max === 0 || (max - min) / max < RECOLOR_SAT_THRESHOLD) {
-                data[o] = tr;
-                data[o + 1] = tg;
-                data[o + 2] = tb;
-            }
-        }
-    }
+// GTK also drops fill-rule cutouts on such a file, so a ring arrives as a solid
+// disc. A gicon without a filename escapes both pipelines, and the rule goes
+// last to outrank a stylesheet the icon carries itself.
+function _tintedSvg(text, color, size) {
+    const chroma = _declaresChroma(text);
+    const css = chroma
+        ? _tintColoredCss(color, _neutralTextClass(text))
+        : _tintMonoCss(color);
+    // The rewrite runs on the source rather than through CSS because no selector
+    // can ask what color a declaration carries.
+    const body = chroma ? _retintNeutrals(text, color) : text;
+    const end = body.lastIndexOf('</svg');
+    if (end < 0)
+        return null;
+    const styled = `${body.slice(0, end)}<style type="text/css">${css}</style>${body.slice(end)}`;
+    return size > 0 ? _sizedSvg(styled, size) : styled;
 }
 
-// The forms gsettings stores a color in: #rgb, #rrggbb, and rgb()/rgba().
+// Without this an icon that paints itself black sits invisible on a dark panel.
+function _retintNeutrals(text, color) {
+    return text.replace(DECLARED_COLOR_RE, (declaration, value) =>
+        _isChromatic(_parseRgb(value)) ? declaration : declaration.replace(value, color));
+}
+
+// Neither toolkit rasterizes these bytes at the size it asks for
+// (gtkiconpaintable.c icon_ensure_paintable__locked passes none), so a 16px
+// source arrives soft at 32. A missing viewBox comes from the old size,
+// otherwise resizing crops.
+function _sizedSvg(text, px) {
+    // The root can carry a namespace prefix, and MoreWaita ships icons whose
+    // root really is <svg:svg>. Anything new is spliced in after the element
+    // NAME, because replacing the literal "<svg" would land inside that name.
+    const tag = text.match(/<([A-Za-z_][\w.-]*:)?svg\b[^>]*>/);
+    if (!tag)
+        return text;
+    const elementName = tag[0].match(/^<[^\s/>]+/)[0];
+    const addAttr = (open, attr) => elementName + attr + open.slice(elementName.length);
+
+    // Inkscape writes single quotes in some icons, and reading those as absent
+    // would append a second width and break the XML.
+    const attrRe = name => new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`);
+    const read = name => {
+        const found = tag[0].match(attrRe(name));
+        return found ? found[1] ?? found[2] : null;
+    };
+    const asNumber = value => value?.match(/^\s*([0-9.]+)\s*(?:px)?\s*$/)?.[1] ?? null;
+    const [width, height] = [read('width'), read('height')];
+
+    let open = tag[0];
+    if (!read('viewBox')) {
+        const [w, h] = [asNumber(width), asNumber(height)];
+        if (!w || !h)
+            return text;
+        open = addAttr(open, ` viewBox="0 0 ${w} ${h}"`);
+    }
+    for (const [name, present] of [['width', width], ['height', height]]) {
+        open = present === null
+            ? addAttr(open, ` ${name}="${px}"`)
+            : open.replace(attrRe(name), ` ${name}="${px}"`);
+    }
+    return text.slice(0, tag.index) + open + text.slice(tag.index + tag[0].length);
+}
+
+function _declaresChroma(text) {
+    DECLARED_COLOR_RE.lastIndex = 0;
+    let match;
+    while ((match = DECLARED_COLOR_RE.exec(text)) !== null) {
+        if (_isChromatic(_parseRgb(match[1])))
+            return true;
+    }
+    return false;
+}
+
+function _neutralTextClass(text) {
+    const declared = text.match(COLOR_SCHEME_TEXT_RE);
+    return !declared || !_isChromatic(_parseRgb(declared[1]));
+}
+
+function _isChromatic(rgb) {
+    if (!rgb)
+        return false;
+    const [r, g, b] = rgb;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    return max > 0 && (max - min) / max >= TINT_SAT_THRESHOLD;
+}
+
+// An unreadable value is refused, librsvg would render it black. Alpha is kept
+// because libadwaita's own text color carries one and the icon has to match
+// what sits next to it.
+function _cssColor(tint) {
+    const rgb = _parseRgb(tint);
+    if (!rgb)
+        return null;
+    const [r, g, b, alpha] = rgb;
+    return alpha < 1
+        ? `rgba(${r},${g},${b},${alpha})`
+        : `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}`;
+}
+
+// The forms a color reaches us in: #rgb and #rrggbb from gsettings, the same
+// with a trailing alpha from St's to_string, and rgb()/rgba() from GTK.
 function _parseRgb(color) {
     if (typeof color !== 'string')
         return null;
-    // 8 digits carry an alpha St appends in to_string, which the tint ignores.
-    const hex = color.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
+    const hex = color.trim().match(/^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
     if (hex) {
         const h = hex[1];
-        const wide = h.length > 3;
+        const wide = h.length > 4;
         const part = i => parseInt(wide ? h.slice(i * 2, i * 2 + 2) : h[i].repeat(2), 16);
-        return [part(0), part(1), part(2)];
+        const carriesAlpha = h.length === 4 || h.length === 8;
+        return [part(0), part(1), part(2), carriesAlpha ? part(3) / 255 : 1];
     }
-    const rgb = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
-    return rgb ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])] : null;
+    const rgb = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?/i);
+    return rgb
+        ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3]), rgb[4] === undefined ? 1 : Number(rgb[4])]
+        : null;
 }
 
 // GTK and St disagree on how they resolve a multi-name themed icon, so the one

@@ -6,11 +6,11 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Util from 'resource:///org/gnome/shell/misc/util.js';
 
 import {warn} from '../../shared/logging.js';
-import {configRenderDelta, displayAppName, reseedIfForgotten, updateAppConfig} from '../../shared/appConfig.js';
+import {configRenderDelta, displayAppName, reseedIfForgotten, unreadBadgeEnabled, updateAppConfig} from '../../shared/appConfig.js';
 import {disconnectAll, disposeAll, ruleDispatcher} from '../../shared/lifecycle.js';
 import {attachStatusIcon, createPanelMenu, destroyMenuSafely, isDisposed, menuAnchorFor, refreshTrayStyle, setBadgeContent, setIconContent, syncHoverStyle, trackDisposal, POPUP_ANIMATION_NONE} from '../utils/actor.js';
 import {configuredIcon} from '../utils/icons.js';
-import {addUnreadListener, desktopIdCandidates, unreadBadge} from '../utils/launcherEntries.js';
+import {addUnreadListener, unreadBadge, unreadTargets} from '../utils/launcherEntries.js';
 import {applyTitle, createTrayActor, syncTooltip} from '../features/tooltip.js';
 import {DRAG_SETTING_KEYS, setupIconDragSource, syncDragEnabled} from '../features/dragAndDrop.js';
 import {TRAY_STYLE_KEYS} from '../../const.js';
@@ -46,8 +46,8 @@ export class BackgroundAppsProxyIcon {
 
         // The portal only lists flatpaks, so the desktop id is known up front
         // and needs no window to resolve, unlike the SNI path.
-        this._unreadCandidates = desktopIdCandidates({appId, packagingKind: 'flatpak'});
-        this._unreadUnsub = addUnreadListener(this._unreadCandidates,
+        this._unreadTargets = unreadTargets({appId, packagingKind: 'flatpak'});
+        this._unreadUnsub = addUnreadListener(this._unreadTargets,
             () => this._syncBadge());
 
         this._draggable = setupIconDragSource({
@@ -188,11 +188,10 @@ export class BackgroundAppsProxyIcon {
     }
 
     // Only the LauncherEntry count, there is no state or icon signal a dot
-    // could follow here. Gated on the custom icon like the SNI badge, the
-    // status dialog is unreachable without one.
+    // could follow here.
     _syncBadge() {
-        const badge = this._config.custom_icon && this._config.unread_badge === true
-            ? unreadBadge(this._unreadCandidates)
+        const badge = unreadBadgeEnabled(this._config)
+            ? unreadBadge(this._unreadTargets)
             : null;
         setBadgeContent(this.actor, this._settings, badge,
             badge ? this._config.badge_style ?? null : null);

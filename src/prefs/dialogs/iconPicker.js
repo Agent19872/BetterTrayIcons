@@ -4,15 +4,17 @@ import Gdk from 'gi://Gdk';
 import GObject from 'gi://GObject';
 import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-import {clearIds, debounceTo, removeTimer} from '../../shared/lifecycle.js';
-import {themedIcon} from '../../shared/icon.js';
-import {createBox, createButton, createIconButton, createImage, createLabel, createFileFilter, applyPathIcon, clearChildren} from '../widgets/gtkHelpers.js';
+import {clearIds, connectScoped, debounceTo, removeTimer} from '../../shared/lifecycle.js';
+import {createBox, createButton, createIconButton, createImage, createLabel, createFileFilter, applyPathIcon, applyTintedIcon, clearChildren, prefsForegroundColor} from '../widgets/gtkHelpers.js';
 import {openFileChooser} from './dialogs.js';
 import {NEXT_ICON_NAME} from '../widgets/rows.js';
 
 // Slower to allow multi-digit input.
 const PAGE_JUMP_DEBOUNCE_MS = 500;
 const ITEMS_PER_PAGE = 32;
+
+// The configured panel color can be anything and would vanish against the dialog.
+const pickerIconStyle = () => ({tint: prefsForegroundColor()});
 
 export default class IconPickerDialog extends Adw.PreferencesDialog {
     static {
@@ -56,9 +58,9 @@ export default class IconPickerDialog extends Adw.PreferencesDialog {
                 icon_name: 'bti-star-symbolic',
                 name: 'recommended',
             });
-            const groupRec = new Adw.PreferencesGroup();
-            pageRec.add(groupRec);
-            groupRec.add(this._createGrid(this._iconList));
+            this._recommendedGroup = new Adw.PreferencesGroup();
+            pageRec.add(this._recommendedGroup);
+            this._fillRecommendedGrid();
             this.add(pageRec);
         }
 
@@ -70,6 +72,17 @@ export default class IconPickerDialog extends Adw.PreferencesDialog {
             this._buildCustomPage();
 
         this._setInitialTab();
+
+        // Finished bytes, not themed icons, so nothing repaints itself.
+        connectScoped(this, Adw.StyleManager.get_default(), 'notify::dark',
+            () => this._retintIcons());
+    }
+
+    _fillRecommendedGrid() {
+        if (this._recommendedGrid)
+            this._recommendedGroup.remove(this._recommendedGrid);
+        this._recommendedGrid = this._createGrid(this._iconList);
+        this._recommendedGroup.add(this._recommendedGrid);
     }
 
     _buildAllIconsPage() {
@@ -150,9 +163,10 @@ export default class IconPickerDialog extends Adw.PreferencesDialog {
             text: this._currentIcon || '',
         });
 
-        const updateCustomPreview = () => applyPathIcon(previewImg, entry.text.trim(), this._settings);
-        entry.connect('changed', updateCustomPreview);
-        updateCustomPreview();
+        this._updateCustomPreview = () =>
+            applyPathIcon(previewImg, entry.text.trim(), this._settings, pickerIconStyle());
+        entry.connect('changed', this._updateCustomPreview);
+        this._updateCustomPreview();
 
         const finishSelection = () => {
             const value = entry.text.trim();
@@ -200,24 +214,36 @@ export default class IconPickerDialog extends Adw.PreferencesDialog {
     }
 
     _setInitialTab() {
-        // _currentFilteredList, not _allSystemIcons, so the page is right
-        // while a search filter is active.
-        this.connect('notify::visible-page-name', () => {
-            if (this.visible_page_name !== 'all' || !this._currentIcon)
-                return;
-            const index = this._currentFilteredList.indexOf(this._currentIcon);
-            if (index !== -1) {
-                this._currentPage = Math.floor(index / this._itemsPerPage);
-                this._renderAllIconsPage();
-            }
-        });
+        this.connect('notify::visible-page-name', () => this._showPageWithCurrentIcon());
 
-        if (this._currentIcon && !this._iconList?.includes(this._currentIcon)) {
-            const index = this._allSystemIcons.indexOf(this._currentIcon);
-            if (index !== -1)
-                this._currentPage = Math.floor(index / this._itemsPerPage);
+        if (this._currentIcon && !this._iconList?.includes(this._currentIcon))
             this.set_visible_page_name('all');
-        }
+
+        // Without a recommended list the dialog already sits on 'all', so no
+        // notify fires.
+        this._showPageWithCurrentIcon();
+    }
+
+    // _currentFilteredList, not _allSystemIcons, so the page is right while a
+    // search filter is active.
+    _showPageWithCurrentIcon() {
+        if (this.visible_page_name !== 'all' || !this._currentIcon)
+            return;
+        const index = this._currentFilteredList.indexOf(this._currentIcon);
+        if (index === -1)
+            return;
+        const page = Math.floor(index / this._itemsPerPage);
+        if (page === this._currentPage)
+            return;
+        this._currentPage = page;
+        this._renderAllIconsPage();
+    }
+
+    _retintIcons() {
+        if (this._recommendedGroup)
+            this._fillRecommendedGrid();
+        this._renderAllIconsPage();
+        this._updateCustomPreview?.();
     }
 
     _setupPaginationEvents(searchEntry) {
@@ -328,6 +354,7 @@ export default class IconPickerDialog extends Adw.PreferencesDialog {
         });
 
         const COLUMNS = 8;
+        const style = pickerIconStyle();
 
         iconList.forEach((iconName, index) => {
             const isCurrent = this._currentIcon === iconName;
@@ -340,7 +367,7 @@ export default class IconPickerDialog extends Adw.PreferencesDialog {
             });
 
             const img = createImage({pixel_size: 32});
-            img.set_from_gicon(themedIcon(iconName));
+            applyTintedIcon(img, iconName, this._settings, style);
             btn.set_child(img);
 
             if (isCurrent)

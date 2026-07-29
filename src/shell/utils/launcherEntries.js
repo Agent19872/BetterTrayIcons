@@ -1,5 +1,8 @@
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
+
+import {callDBusDaemon} from './dbus.js';
 
 // SNI has no unread-count property, apps bake the number into their icon
 // pixmap. The count itself is broadcast on the Unity LauncherEntry
@@ -11,17 +14,20 @@ const APP_URI_PREFIX = 'application://';
 
 const FLATPAK_APP_ID_PREFIX = 'flatpak-';
 
+const PID_TARGET_PREFIX = 'pid:';
+const _pidTarget = pid => `${PID_TARGET_PREFIX}${pid}`;
+
 // A second digit no longer fits the badge at panel icon sizes.
 const UNREAD_BADGE_MAX = 9;
 
 // Launchers and apps disagree on desktop-id casing (our appIds are
 // lowercased, the LauncherEntry uri carries the app's own), so every key
 // in these maps is stored and compared lowercase.
-// desktopId -> {count, visible, sender}
+// target -> {count, visible, sender}
 const _entries = new Map();
-// sender unique name -> {watchId, ids: Set<desktopId>}
+// sender unique name -> {watchId, pid, targets: Set<target>}
 const _senders = new Map();
-// desktopId -> Set<callback>
+// target -> Set<callback>
 const _listeners = new Map();
 
 let _subscriptionId = 0;
@@ -47,27 +53,29 @@ export function disableLauncherEntries() {
     _listeners.clear();
 }
 
-export function unreadBadge(desktopIds) {
-    const count = unreadCountFor(desktopIds);
+export function unreadBadge(targets) {
+    const count = unreadCountFor(targets);
     if (count === null)
         return null;
     return {text: count > UNREAD_BADGE_MAX ? `${UNREAD_BADGE_MAX}+` : String(count)};
 }
 
-function unreadCountFor(desktopIds) {
-    for (const id of desktopIds ?? []) {
-        const entry = _entries.get(id);
+function unreadCountFor(targets) {
+    for (const target of targets ?? []) {
+        const entry = _entries.get(target);
         if (entry && entry.visible && entry.count > 0)
             return entry.count;
     }
     return null;
 }
 
-// The pid route only resolves windowed apps, and for a flatpak the bus
-// hands us the sandbox proxy's pid, which never owns a window. Its appId
-// carries the flatpak id though, and that IS the desktop id.
-export function desktopIdCandidates({pid = null, appId = null, packagingKind = null} = {}) {
+// The desktop id needs a mapped window and a tray-parked chat app has none.
+// Outside a flatpak, whose appId already carries the id, the emitting process
+// closes that gap.
+export function unreadTargets({pid = null, appId = null, packagingKind = null} = {}) {
     const out = new Set();
+    if (pid)
+        out.add(_pidTarget(pid));
     const tracked = pid
         ? Shell.WindowTracker.get_default().get_app_from_pid(pid)?.get_id() ?? null
         : null;
@@ -78,31 +86,22 @@ export function desktopIdCandidates({pid = null, appId = null, packagingKind = n
     return [...out];
 }
 
-// The pid route above resolves nothing until the app's window is tracked,
-// which can land after the icon's last resolve, so a listener that came up
-// empty needs this as its wake-up call.
-export function addTrackedWindowsListener(callback) {
-    const tracker = Shell.WindowTracker.get_default();
-    const id = tracker.connect('tracked-windows-changed', callback);
-    return () => tracker.disconnect(id);
-}
-
-export function addUnreadListener(desktopIds, callback) {
-    const ids = (desktopIds ?? []).filter(id => id);
-    if (ids.length === 0)
+export function addUnreadListener(targets, callback) {
+    const keys = (targets ?? []).filter(target => target);
+    if (keys.length === 0)
         return null;
-    for (const id of ids) {
-        let set = _listeners.get(id);
+    for (const key of keys) {
+        let set = _listeners.get(key);
         if (!set)
-            _listeners.set(id, set = new Set());
+            _listeners.set(key, set = new Set());
         set.add(callback);
     }
     return () => {
-        for (const id of ids) {
-            const set = _listeners.get(id);
+        for (const key of keys) {
+            const set = _listeners.get(key);
             set?.delete(callback);
             if (set?.size === 0)
-                _listeners.delete(id);
+                _listeners.delete(key);
         }
     };
 }
@@ -131,14 +130,14 @@ function _onUpdate(sender, params) {
     entry.sender = sender;
     _entries.set(desktopId, entry);
 
-    _watchSender(sender, desktopId);
+    const pidTarget = _linkPid(_watchSender(sender, desktopId), entry);
 
     // Electron re-emits Update per progress tick, and every callback here is
     // a full icon resolve.
     if (entry.count === prevCount && entry.visible === prevVisible)
         return;
-    for (const callback of _listeners.get(desktopId) ?? [])
-        callback();
+    _fire(desktopId);
+    _fire(pidTarget);
 }
 
 // A killed app never retracts its entry, so the count would stick on the
@@ -146,12 +145,51 @@ function _onUpdate(sender, params) {
 function _watchSender(sender, desktopId) {
     let record = _senders.get(sender);
     if (!record) {
-        record = {ids: new Set(), watchId: 0};
+        record = {targets: new Set(), watchId: 0, pid: null};
         _senders.set(sender, record);
         record.watchId = Gio.bus_watch_name(Gio.BusType.SESSION, sender,
             Gio.BusNameWatcherFlags.NONE, null, () => _dropSender(sender));
+        _lookupSenderPid(sender, record);
     }
-    record.ids.add(desktopId);
+    record.targets.add(desktopId);
+    return record;
+}
+
+// The bus answers with the pid only after a round trip, so the first
+// emission of a freshly seen sender still has to reach its listeners once
+// the answer lands.
+async function _lookupSenderPid(sender, record) {
+    let pid = null;
+    try {
+        [pid] = (await callDBusDaemon(Gio.DBus.session, 'GetConnectionUnixProcessID',
+            new GLib.Variant('(s)', [sender]),
+            new GLib.VariantType('(u)'))).deep_unpack();
+    } catch {
+        return;
+    }
+    if (!pid || _senders.get(sender) !== record)
+        return;
+
+    const pending = [...record.targets].map(target => _entries.get(target));
+    record.pid = pid;
+    for (const entry of pending) {
+        if (entry)
+            _fire(_linkPid(record, entry));
+    }
+}
+
+function _linkPid(record, entry) {
+    if (!record.pid)
+        return null;
+    const target = _pidTarget(record.pid);
+    record.targets.add(target);
+    _entries.set(target, entry);
+    return target;
+}
+
+function _fire(target) {
+    for (const callback of _listeners.get(target) ?? [])
+        callback();
 }
 
 function _dropSender(sender) {
@@ -160,11 +198,10 @@ function _dropSender(sender) {
         return;
     Gio.bus_unwatch_name(record.watchId);
     _senders.delete(sender);
-    for (const desktopId of record.ids) {
-        if (_entries.get(desktopId)?.sender !== sender)
+    for (const target of record.targets) {
+        if (_entries.get(target)?.sender !== sender)
             continue;
-        _entries.delete(desktopId);
-        for (const callback of _listeners.get(desktopId) ?? [])
-            callback();
+        _entries.delete(target);
+        _fire(target);
     }
 }

@@ -9,7 +9,7 @@ import {identifyApp, resolveTrayIcon} from '../utils/icons.js';
 import {pickDisplayTitle} from '../utils/appId.js';
 import {forgetItem} from '../utils/itemSplit.js';
 import {attachStatusIcon, isDisposed, trackDisposal, createPanelMenu, menuAnchorFor, destroyMenuSafely, refreshTrayStyle, setBadgeContent, setIconContent, syncHoverStyle, POPUP_ANIMATION_NONE} from '../utils/actor.js';
-import {addTrackedWindowsListener, addUnreadListener, desktopIdCandidates} from '../utils/launcherEntries.js';
+import {addUnreadListener, unreadTargets} from '../utils/launcherEntries.js';
 import {DBusMenuClient} from './dbusMenuClient.js';
 import {ClickController} from '../features/clickController.js';
 import {DRAG_SETTING_KEYS, setupIconDragSource, syncDragEnabled} from '../features/dragAndDrop.js';
@@ -29,7 +29,7 @@ const MENU_REOPEN_GUARD_MS = 200;
 const MENU_DROP_DELAY_MS = 0;
 
 // Keys that need a fresh resolve rather than a restyle. The color ones decide
-// the tint a recolored custom icon is baked with, which no restyle can change.
+// the tint that goes into a symbolic icon's bytes, which no restyle can change.
 const ICON_RESOLVE_KEYS = Object.freeze([
     'icon-size',
     'enable-symbolic-icons',
@@ -64,7 +64,6 @@ export class TrayIcon {
         this._updateGen = 0;
         this._titleGen = 0;
         this._unreadUnsub = null;
-        this._trackerUnsub = null;
 
         this._proxySignals = [];
         this._gObjectSignals = [];
@@ -364,53 +363,31 @@ export class TrayIcon {
         }
     }
 
-    // The color St paints a symbolic icon in this actor. It already resolves the
-    // accent keyword and the panel default, which settings alone cannot, so a
-    // baked icon matches what a themed one would look like. Null before the
-    // actor is styled, the caller falls back to the plain settings color.
+    // St already resolves the accent keyword and the panel default, which
+    // settings alone cannot, so a tinted icon matches what a themed one would
+    // look like. Off the stage it answers with its own default foreground
+    // instead of failing, which would tint the first frame black.
     _iconTint() {
-        try {
-            return this._iconActor.get_theme_node().get_foreground_color().to_string();
-        } catch {
+        if (!this._iconActor.get_stage())
             return null;
-        }
+        return this._iconActor.get_theme_node().get_foreground_color().to_string();
     }
 
     // Registered only while the badge is on, an idle listener would turn
-    // every LauncherEntry emission into a full resolve. The desktop id needs
-    // a mapped window, which can appear well after the last resolve, so a
-    // registration that came up empty waits for the window tracker.
+    // every LauncherEntry emission into a full resolve. An item still
+    // waiting for its pid registers nothing and gets another try on the
+    // next resolve.
     _syncUnreadListener(entry) {
         if (!unreadBadgeEnabled(entry)) {
             this._unreadUnsub?.();
             this._unreadUnsub = null;
-            this._dropTrackerRetry();
             return;
         }
-        if (this._unreadUnsub)
-            return;
-
-        this._unreadUnsub = addUnreadListener(desktopIdCandidates({
+        this._unreadUnsub ??= addUnreadListener(unreadTargets({
             pid: this._pid,
             appId: this.appId,
             packagingKind: entry?.packaging ?? null,
         }), this._guarded(() => this._queueUpdate()));
-
-        if (this._unreadUnsub)
-            this._dropTrackerRetry();
-        else
-            this._trackerUnsub ??= addTrackedWindowsListener(this._guarded(() => this._retryUnreadListener()));
-    }
-
-    _retryUnreadListener() {
-        this._syncUnreadListener(this.appId ? getAppConfigMap(this._settings)[this.appId] : null);
-        if (this._unreadUnsub)
-            this._queueUpdate();
-    }
-
-    _dropTrackerRetry() {
-        this._trackerUnsub?.();
-        this._trackerUnsub = null;
     }
 
     async _updateTitle() {
@@ -577,7 +554,6 @@ export class TrayIcon {
 
         this._unreadUnsub?.();
         this._unreadUnsub = null;
-        this._dropTrackerRetry();
 
         disposeAll(this, 'destroy', '_draggable', '_clickController', '_tooltip');
         disconnectSignal(this, this._settings, '_settingsConnectId');

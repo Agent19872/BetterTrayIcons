@@ -7,7 +7,7 @@ import GdkPixbuf from 'gi://GdkPixbuf';
 import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 import {error} from '../../shared/logging.js';
-import {buildSymbolicCandidates, orderThemedNames, themedIcon, pathOrThemedIcon, probeIconPaths, recolorSymbolicFile, isSymbolicName, symbolicTint} from '../../shared/icon.js';
+import {buildSymbolicCandidates, orderThemedNames, themedIcon, pathOrThemedIcon, probeIconPaths, tintedSymbolicIcon, symbolicTint} from '../../shared/icon.js';
 import {fileExists} from '../../shared/fetch.js';
 import {connectScoped, ruleDispatcher} from '../../shared/lifecycle.js';
 import {BOX_SIDES, PREVIEW_STOCK_POPUP_CSS} from '../../const.js';
@@ -402,6 +402,10 @@ export function createFileFilter(name, patterns = [], mimeTypes = []) {
     return filter;
 }
 
+// Past the raster sizes a symbolic icon ships in, where the scalable directory
+// is the only zero-distance match (gtkicontheme.c compare_dir_size_matches).
+const THEME_FILE_LOOKUP_PX = 128;
+
 let _iconTheme = null;
 export function hasThemeIcon(name) {
     if (!name)
@@ -410,7 +414,7 @@ export function hasThemeIcon(name) {
     return _iconTheme.has_icon(name);
 }
 
-export function applyPathIcon(image, value, settings = null) {
+export function applyPathIcon(image, value, settings = null, options = {}) {
     if (!image)
         return;
     if (!value) {
@@ -420,17 +424,23 @@ export function applyPathIcon(image, value, settings = null) {
 
     image._btiPendingIcon = value;
 
+    // Only a caller that names its own tint wants one applied here, so a preview
+    // bound to a different color key keeps its own.
     if (!value.startsWith('/')) {
-        image.set_from_gicon(pathOrThemedIcon(value));
+        if (!options.tint) {
+            image.set_from_gicon(pathOrThemedIcon(value));
+            return;
+        }
+        applyTintedIcon(image, value, settings, options);
         return;
     }
 
     // Probing is async, so a fast typist can outrun it. Only the value the
     // image is showing now gets to paint.
-    Promise.all([fileExists(value), _recoloredFor(value, settings)]).then(([exists, recolored]) => {
+    Promise.all([fileExists(value), _tintedFor(value, settings, image, options)]).then(([exists, tinted]) => {
         if (image._btiPendingIcon !== value)
             return;
-        image.set_from_gicon(recolored ?? pathOrThemedIcon(value, exists));
+        image.set_from_gicon(tinted ?? pathOrThemedIcon(value, exists));
     });
 }
 
@@ -440,13 +450,51 @@ export function prefsSymbolicTint(settings) {
         Adw.StyleManager.get_default().get_accent_color_rgba().to_string());
 }
 
-// A -symbolic file gets its neutral parts recolored to the icon tint, else
-// null so the caller keeps its plain FileIcon. Skipped without settings, since
-// the tint comes from there.
-function _recoloredFor(value, settings) {
-    if (!settings || !isSymbolicName(value))
+// libadwaita's window_fg_color, measured off a realized widget: the color the
+// tab labels and their icons are drawn in.
+const PREFS_FG_DARK = '#ffffff';
+const PREFS_FG_LIGHT = 'rgba(0,0,6,0.8)';
+
+// A widget cannot answer this before it is in a window: an unparented Gtk.Image
+// reports white in either scheme, which would paint light-mode icons invisible.
+export function prefsForegroundColor() {
+    return Adw.StyleManager.get_default().get_dark() ? PREFS_FG_DARK : PREFS_FG_LIGHT;
+}
+
+// Guarded by has_icon because lookup_icon never returns null, it falls back to
+// image-missing, and tinting that would paint the fallback everywhere.
+export function themeIconFile(name) {
+    if (!name || !hasThemeIcon(name))
+        return null;
+    const paintable = _iconTheme.lookup_icon(
+        name, null, THEME_FILE_LOOKUP_PX, 1, Gtk.TextDirection.LTR, 0);
+    return paintable.get_file()?.get_path() ?? null;
+}
+
+function _tintedFor(value, settings, image, {tint = null} = {}) {
+    if (!value || (!settings && !tint))
         return Promise.resolve(null);
-    return recolorSymbolicFile(value, prefsSymbolicTint(settings));
+    return tintedSymbolicIcon(value, tint ?? prefsSymbolicTint(settings),
+        {size: devicePixelSize(image), lookupThemeFile: themeIconFile});
+}
+
+// pixel_size stays -1 until a caller sets one, and GTK then sizes from the
+// icon-size enum, which is not readable from here.
+export function devicePixelSize(widget, px = null) {
+    const size = px ?? widget.pixel_size;
+    return size > 0 ? size * widget.get_scale_factor() : 0;
+}
+
+// No themed icon first and a swap when the bytes land: GTK draws nothing at all
+// for some app logos (slack-symbolic and devpod-symbolic in MoreWaita, measured).
+export function applyTintedIcon(image, name, settings, options = {}) {
+    if (!image || !name)
+        return;
+    image._btiPendingIcon = name;
+    _tintedFor(name, settings, image, options).then(tinted => {
+        if (image._btiPendingIcon === name)
+            image.set_from_gicon(tinted ?? themedIcon(name));
+    });
 }
 
 // GTK renders a FileIcon whose file is gone as something other than
@@ -454,34 +502,38 @@ function _recoloredFor(value, settings) {
 // can sit on a network mount, so file results are probed off the render path.
 export function applyIconPreview(imageWidget, iconResult, settings) {
     const useSymbolic = settings.get_boolean('enable-symbolic-icons');
+    const value = iconResult?.value;
     if (iconResult?.type !== 'file') {
+        // A name has no file to probe, but it can still be a colored icon the
+        // toolkit would flatten.
         applyResolvedIcon(imageWidget, iconResult, useSymbolic);
+        applyTintedIcon(imageWidget, value, settings);
         return;
     }
-    const path = iconResult.value;
-    imageWidget._btiPendingIcon = path;
+    imageWidget._btiPendingIcon = value;
     Promise.all([
-        probeIconPaths([{custom_icon: path}]),
-        _recoloredFor(path, settings),
-    ]).then(([paths, recolored]) => {
-        if (imageWidget._btiPendingIcon === path)
-            applyResolvedIcon(imageWidget, iconResult, useSymbolic, paths, recolored);
+        probeIconPaths([{custom_icon: value}]),
+        _tintedFor(value, settings, imageWidget),
+    ]).then(([paths, tinted]) => {
+        if (imageWidget._btiPendingIcon === value)
+            applyResolvedIcon(imageWidget, iconResult, useSymbolic, paths, tinted);
     });
 }
 
-export function applyResolvedIcon(image, iconResult, useSymbolic = false, iconPaths = null, recoloredGicon = null) {
+export function applyResolvedIcon(image, iconResult, useSymbolic = false, iconPaths = null, tintedGicon = null) {
     if (!image || !iconResult) {
         if (image)
             image.clear();
         return;
     }
 
+    if (tintedGicon) {
+        image.set_from_gicon(tintedGicon);
+        return;
+    }
+
     if (iconResult.type === 'file') {
         const exists = iconPaths ? iconPaths.get(iconResult.value) !== false : true;
-        if (exists && recoloredGicon) {
-            image.set_from_gicon(recoloredGicon);
-            return;
-        }
         image.set_from_gicon(exists
             ? new Gio.FileIcon({file: Gio.File.new_for_path(iconResult.value)})
             : themedIcon('image-missing'));

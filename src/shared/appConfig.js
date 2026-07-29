@@ -29,6 +29,7 @@ const TRAY_CONFIG_RENDER_FIELDS = Object.freeze([
     'custom_icon',
     'cached_icon_path',
     'detected_icon',
+    'detected_icon_hash',
     'icon_theme_path',
     'state_icons',
     'unread_badge',

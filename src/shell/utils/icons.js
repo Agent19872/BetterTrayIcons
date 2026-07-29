@@ -4,12 +4,12 @@ import GdkPixbuf from 'gi://GdkPixbuf';
 import St from 'gi://St';
 import Shell from 'gi://Shell';
 
-import {resolveIcon, findIconInTheme, buildSymbolicCandidates, orderThemedNames, writeCachedIcon, deleteCachedIcon, recolorSymbolicFile, isSymbolicName, symbolicTint, clearRecolorCache, MONO_ASSET_SUFFIX_RE} from '../../shared/icon.js';
+import {resolveIcon, findIconInTheme, buildSymbolicCandidates, orderThemedNames, writeCachedIcon, deleteCachedIcon, tintedSymbolicIcon, symbolicTint, clearTintCache, MONO_ASSET_SUFFIX_RE} from '../../shared/icon.js';
 import {updateAppConfig, migrateLegacyConfig, claimAppId, getAppConfigMap, getAppConfigValue, setAppConfigValue, findStateIconEntry, recordSeenStateIcons, isVolatileIconName, stateNameOf, unreadBadgeEnabled, ATTENTION_STATE_KEY} from '../../shared/appConfig.js';
 import {readFileBytes, fileExists} from '../../shared/fetch.js';
 import {warnOnce} from '../../shared/logging.js';
 import {getItemAddress, refreshPropertyOnProxy, refreshStringOnProxy, getProcessInfo} from './dbus.js';
-import {unreadBadge, desktopIdCandidates} from './launcherEntries.js';
+import {unreadBadge, unreadTargets} from './launcherEntries.js';
 import {stageScaleFactor} from './actor.js';
 import {pickAppId, pickDisplayTitle, legacyAppId, sanitizeAppId} from './appId.js';
 import {resolveItemId} from './itemSplit.js';
@@ -148,23 +148,27 @@ async function _resolveIcon(proxy, settings, appId, lastPixmapHash, status, dete
     // then IS the cue, so it keeps a custom icon in place where a bare
     // alert would push it aside.
     const unreadEnabled = unreadBadgeEnabled(configMap[appId]);
+    // The counter class never trips the name alert: Chromium bumps a volatile
+    // file per change and pixmaps carry no name at all, so the only readable
+    // signal is the image content itself.
+    const counterClass = status !== 'NeedsAttention' &&
+        (!detectedName || isVolatileIconName(detectedName));
     let badge = null;
     let alertCovered = false;
     if (unreadEnabled) {
-        badge = unreadBadge(desktopIdCandidates({
+        badge = unreadBadge(unreadTargets({
             pid, appId,
             packagingKind: getAppConfigValue(settings, appId, 'packaging', null, configMap),
         }));
         if (!badge && status !== 'NeedsAttention') {
             if (hasAlert)
                 badge = {text: null};
-            // The counter class never trips the name alert: Chromium bumps a
-            // volatile file per change and pixmaps carry no name at all, so
-            // the only readable signal is the image content itself.
-            else if (!detectedName || isVolatileIconName(detectedName))
+            else if (counterClass)
                 badge = await _contentAlertBadge(proxy, settings, appId, detectedName);
         }
         alertCovered = badge !== null;
+    } else if (counterClass) {
+        await _rememberRestingContent(proxy, settings, appId, detectedName);
     }
 
     const stateIcons = customIcon
@@ -205,13 +209,14 @@ async function _resolveIcon(proxy, settings, appId, lastPixmapHash, status, dete
     if (iconName && MONO_ASSET_SUFFIX_RE.test(iconName)) {
         const themed = _themedIconFromName(iconName, settings, true, appId, configMap);
         if (themed)
-            return {...themed, detected, badge};
+            return {...await _tintedThemed(themed, settings, tint), detected, badge};
     }
 
-    const fileIconResult = path => {
+    const fileIconResult = async path => {
         const file = Gio.File.new_for_path(path);
         _snapshotIconToCache(settings, appId, file, generation).catch(() => { /* best-effort */ });
-        return {gicon: new Gio.FileIcon({file}), iconName: null, detected, badge};
+        const tinted = await _tinted(path, settings, tint);
+        return {gicon: tinted ?? new Gio.FileIcon({file}), iconName: null, detected, badge};
     };
 
     if (iconName) {
@@ -229,7 +234,7 @@ async function _resolveIcon(proxy, settings, appId, lastPixmapHash, status, dete
     if (isThemeName) {
         const themed = _themedIconFromName(iconName, settings, true, appId, configMap);
         if (themed)
-            return {...themed, detected, badge};
+            return {...await _tintedThemed(themed, settings, tint), detected, badge};
     }
 
     // Cache the result to disk so the prefs Applications page renders the
@@ -302,21 +307,38 @@ async function _resolveIcon(proxy, settings, appId, lastPixmapHash, status, dete
 }
 
 // A dot for apps whose unread cue only exists as different image bytes.
-// The first content seen seeds the calm baseline, one write per app. An
-// app booting straight into its unread image keeps the dot inverted until
-// a Forget re-seeds it, nothing in the data tells the two frames apart.
+// Seeding takes whatever is on screen, so an app that boots straight into
+// its unread image reads inverted until the resting state is redefined in
+// the prefs.
 async function _contentAlertBadge(proxy, settings, appId, detectedName) {
     const contentHash = await _liveIconContentHash(proxy, settings, detectedName);
     if (contentHash === null)
         return null;
     // Read fresh after the await: two resolves can overlap, and one deciding
     // on a snapshot from before the other's seed would re-seed over it.
-    const baseline = getAppConfigValue(settings, appId, 'detected_icon_hash');
-    if (baseline === null) {
-        setAppConfigValue(settings, appId, 'detected_icon_hash', contentHash);
-        return null;
+    const stored = getAppConfigValue(settings, appId, 'detected_icon_hash');
+    const baseline = stored ?? _restingContentHash.get(appId) ?? contentHash;
+    if (stored === null) {
+        // Read into baseline above and then dropped, otherwise redefining the
+        // resting state in the prefs would only put this frame back.
+        _restingContentHash.delete(appId);
+        setAppConfigValue(settings, appId, 'detected_icon_hash', baseline);
     }
     return contentHash === baseline ? null : {text: null};
+}
+
+// Whatever the app showed when it first came up, kept per session so the
+// blob stays untouched while the badge is off. Switching it on later has to
+// reach back to that frame, a chat app sitting on unread would otherwise
+// define its alert as the calm state.
+const _restingContentHash = new Map();
+
+async function _rememberRestingContent(proxy, settings, appId, detectedName) {
+    if (!appId || _restingContentHash.has(appId))
+        return;
+    const hash = await _liveIconContentHash(proxy, settings, detectedName);
+    if (hash !== null)
+        _restingContentHash.set(appId, hash);
 }
 
 async function _liveIconContentHash(proxy, settings, detectedName) {
@@ -365,6 +387,7 @@ function _themedIconFromName(iconName, settings, requireInTheme = true, appId = 
         return null;
 
     let existing = null;
+    let themeFile = null;
     let themeReady = false;
     try {
         _sharedIconTheme ??= new St.IconTheme();
@@ -373,7 +396,14 @@ function _themedIconFromName(iconName, settings, requireInTheme = true, appId = 
         // then loses to an image-missing tail. Gtk's has_icon does see those, so
         // this is what keeps the prefs and the panel on the same icon.
         const size = _deviceIconSize(settings);
-        existing = candidates.find(n => n && _sharedIconTheme.lookup_icon(n, size, 0)) ?? null;
+        for (const name of candidates) {
+            const info = name ? _sharedIconTheme.lookup_icon(name, size, 0) : null;
+            if (!info)
+                continue;
+            existing = name;
+            themeFile = info.get_filename() ?? null;
+            break;
+        }
         themeReady = true;
     } catch { /* no theme available yet, let the render-time lookup decide */ }
 
@@ -388,6 +418,7 @@ function _themedIconFromName(iconName, settings, requireInTheme = true, appId = 
     return {
         gicon: new Gio.ThemedIcon({names, use_default_fallbacks: true}),
         iconName: null,
+        themeFile,
     };
 }
 
@@ -402,12 +433,22 @@ function _dropCachedIcon(settings, appId, map) {
     deleteCachedIcon(appId);
 }
 
+async function _tintedThemed(themed, settings, tint) {
+    const tinted = await _tinted(themed.themeFile, settings, tint);
+    return {gicon: tinted ?? themed.gicon, iconName: null};
+}
+
+function _tinted(path, settings, tint) {
+    return tintedSymbolicIcon(path, tint ?? symbolicTint(settings),
+        {size: _deviceIconSize(settings)});
+}
+
 // The icon update runs on the shell's main loop, where a blocking stat stalls
 // the whole desktop rather than one window.
 async function _configuredIconAsync(value, settings, tint = null) {
     const exists = value?.startsWith('/') ? await fileExists(value) : null;
-    if (exists && isSymbolicName(value)) {
-        const gicon = await recolorSymbolicFile(value, tint ?? symbolicTint(settings));
+    if (exists) {
+        const gicon = await _tinted(value, settings, tint);
         if (gicon)
             return {gicon, iconName: null};
     }
@@ -488,8 +529,9 @@ export function clearIconCaches() {
     _pendingSnapshots.clear();
     _lastSnapshotAt.clear();
     _snapshotSeq.clear();
+    _restingContentHash.clear();
     _sharedIconTheme = null;
-    clearRecolorCache();
+    clearTintCache();
 }
 
 async function _throttledSnapshot(appId, generation, writeFn, {force = false} = {}) {

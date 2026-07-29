@@ -6,14 +6,16 @@ import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions
 
 import {getAppConfigs, deleteAppConfig, resetAllAppConfigs, displayAppName} from '../../shared/appConfig.js';
 import {connectScoped, clearIds, debounceTo, removeTimer} from '../../shared/lifecycle.js';
-import {resolveIcon, probeIconPaths, themeProbeKey, recolorSymbolicIconMap} from '../../shared/icon.js';
+import {resolveIcon, probeIconPaths, themeProbeKey, tintedSymbolicIconMap} from '../../shared/icon.js';
 import AppDialog from '../dialogs/appDialog.js';
-import {createButton, createIconButton, createImage, applyResolvedIcon, hasThemeIcon, prefsSymbolicTint} from '../widgets/gtkHelpers.js';
+import {createButton, createIconButton, createImage, applyResolvedIcon, devicePixelSize, hasThemeIcon, prefsSymbolicTint, themeIconFile} from '../widgets/gtkHelpers.js';
 import {createActionRow, NEXT_ICON_NAME} from '../widgets/rows.js';
 import {addToast} from '../widgets/sidebar.js';
 import {showConfirmationDialog} from '../dialogs/dialogs.js';
 
 const PAGE_REBUILD_DEBOUNCE_MS = 100;
+
+const ROW_ICON_PX = 32;
 
 // Product names, so nothing to translate. Shown behind the app's own title,
 // which is identical across builds and would otherwise list three times.
@@ -77,16 +79,29 @@ export class ApplicationsPage extends Adw.PreferencesPage {
         apps.sort((a, b) => displayAppName(a, a.id)
             .localeCompare(displayAppName(b, b.id), undefined, {sensitivity: 'base'}));
 
-        Promise.all([probeIconPaths(apps), recolorSymbolicIconMap(apps, prefsSymbolicTint(this._settings))])
-            .then(([iconPaths, recoloredIcons]) => {
-                if (gen === this._buildGen)
-                    this._renderApps(apps, iconPaths, recoloredIcons);
-            });
+        probeIconPaths(apps).then(async iconPaths => {
+            const tintedIcons = await this._tintIcons(apps, iconPaths);
+            if (gen === this._buildGen)
+                this._renderApps(apps, iconPaths, tintedIcons);
+        });
     }
 
-    _renderApps(apps, iconPaths, recoloredIcons) {
+    _tintIcons(apps, iconPaths) {
+        return tintedSymbolicIconMap(
+            apps.map(app => this._resolveFor(app, iconPaths).value),
+            prefsSymbolicTint(this._settings),
+            {size: devicePixelSize(this, ROW_ICON_PX), lookupThemeFile: themeIconFile});
+    }
+
+    _resolveFor(app, iconPaths) {
+        const themeKey = themeProbeKey(app);
+        return resolveIcon(app, hasThemeIcon, iconPaths.get(app.cached_icon_path),
+            themeKey ? iconPaths.get(themeKey) ?? null : null);
+    }
+
+    _renderApps(apps, iconPaths, tintedIcons) {
         this._iconPaths = iconPaths;
-        this._recoloredIcons = recoloredIcons;
+        this._tintedIcons = tintedIcons;
         if (this._appsGroup) {
             this.remove(this._appsGroup);
             this._appsGroup = null;
@@ -112,18 +127,15 @@ export class ApplicationsPage extends Adw.PreferencesPage {
 
             // These render through XEmbed, whose X11 surface the prefs cannot
             // snapshot, so the list shows a flavor glyph instead of the real icon.
-            const iconImage = createImage({pixel_size: 32});
+            const iconImage = createImage({pixel_size: ROW_ICON_PX});
             if (app.is_proton) {
                 iconImage.set_from_icon_name('bti-proton-symbolic');
             } else if (app.is_wine) {
                 iconImage.set_from_icon_name('bti-wine-symbolic');
             } else {
-                const themeKey = themeProbeKey(app);
-                const resolved = resolveIcon(app, hasThemeIcon,
-                    iconPaths.get(app.cached_icon_path),
-                    themeKey ? iconPaths.get(themeKey) ?? null : null);
+                const resolved = this._resolveFor(app, iconPaths);
                 applyResolvedIcon(iconImage, resolved, useSymbolic, iconPaths,
-                    recoloredIcons.get(resolved.value) ?? null);
+                    tintedIcons.get(resolved.value) ?? null);
             }
 
             let flavor = PACKAGING_LABELS[app.packaging] ?? null;

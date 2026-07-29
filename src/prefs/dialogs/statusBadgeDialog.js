@@ -6,7 +6,7 @@ import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions
 import {setAppConfigValue, mutateAppConfig, getAppConfigMap, findStateIconEntry, sameStateKey, ATTENTION_STATE_KEY, RESERVED_OBJECT_KEYS} from '../../shared/appConfig.js';
 import {resolveIcon} from '../../shared/icon.js';
 import {connectScoped} from '../../shared/lifecycle.js';
-import {createColorSwatch, createIconButton, createImage, applyIconPreview, attachBadge} from '../widgets/gtkHelpers.js';
+import {createButton, createColorSwatch, createIconButton, createImage, applyIconPreview, attachBadge} from '../widgets/gtkHelpers.js';
 import {createActionRow, createExpanderSection, NEXT_ICON_NAME} from '../widgets/rows.js';
 import IconPickerDialog from './iconPicker.js';
 import {buildDialogShell, dialogSizeProps, pinDialogWidth, buildGroupDialog} from './dialogs.js';
@@ -77,6 +77,7 @@ export default class StatusBadgeDialog extends Adw.Dialog {
         // dialog only ever exposes one of the two at a time.
         this._styleGroup = new Adw.PreferencesGroup();
         page.add(this._styleGroup);
+        this._styleGroup.add(this._buildRestingRow());
         this._styleGroup.add(this._buildPositionRow());
         this._styleGroup.add(this._buildRadiusRow());
         this._styleGroup.add(this._buildSizeRow());
@@ -123,6 +124,24 @@ export default class StatusBadgeDialog extends Adw.Dialog {
                 delete entry.badge_style;
             this._data.badge_style = entry.badge_style;
         });
+    }
+
+    // The name alert and the content dot keep separate baselines, so both have
+    // to go for the next frame to become the reference.
+    _buildRestingRow() {
+        const button = createButton({
+            label: _('Define'),
+            callback: () => {
+                mutateAppConfig(this._settings, this._appId, entry => {
+                    delete entry.detected_icon;
+                    delete entry.detected_icon_hash;
+                });
+                this._toast(_('Resting state updated.'));
+            },
+        });
+        return createActionRow(_('Resting State'),
+            _('Takes what the app shows right now as its calm look.'),
+            {suffixWidgets: [button]});
     }
 
     _buildPositionRow() {
