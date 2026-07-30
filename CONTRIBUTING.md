@@ -164,6 +164,7 @@ Common types:
 
 - `feat` for new features
 - `fix` for bug fixes
+- `i18n` for translations, new languages as well as updates
 - `refactor` for changes that don't affect behavior
 - `docs` for documentation only
 - `style` for formatting and whitespace
@@ -175,8 +176,11 @@ Examples:
 ```
 feat: add per-app icon override
 fix: restore tooltip position when the panel is on the left
+i18n: add Italian translation
 docs: document the sync dialog
 ```
+
+The type decides the version bump, so please use `i18n:` for translation PRs, not `feat:`. Translations ship as a patch release and get their own section in the changelog.
 
 Keep the subject under 72 characters. The body, when present, explains the motivation, not the diff.
 
