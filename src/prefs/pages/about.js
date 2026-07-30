@@ -290,11 +290,14 @@ export class AboutPage extends Adw.PreferencesPage {
                 error(`Failed to fetch contributors: ${e.message}`);
             }
 
-            group.remove(loadingRow);
+            const uncached = await fetchMissingContributors(data, this._cancellable);
 
             // Apply the opt-out filter before slicing, so an opted-out user
             // never displaces a visible contributor.
-            data = filterContributors(data);
+            data = filterContributors(data.concat(uncached));
+            data.sort((a, b) => b.contributions - a.contributions);
+
+            group.remove(loadingRow);
 
             if (data.length === 0) {
                 const noContribLabel = createLabel(_('No contributors found'), ['dim-label'], {halign: 'center', margin_top: 12, margin_bottom: 12});
@@ -368,6 +371,33 @@ function filterContributors(list) {
     return list.filter(c =>
         c && typeof c.login === 'string' && !CONTRIBUTORS_OPTOUT.has(c.login.toLowerCase())
     );
+}
+
+// GitHub serves the contributors list from a cache it documents as possibly
+// a few hours old, so whoever landed their first commit today is missing.
+// The statistics endpoint has them right away, but it answers 202 with an
+// empty body while it recomputes, so it augments the list instead of
+// replacing it.
+async function fetchMissingContributors(known, cancellable) {
+    let stats;
+    try {
+        stats = await fetchJson(`${GITHUB_API_REPO_URL}/stats/contributors`, cancellable);
+    } catch {
+        return [];
+    }
+
+    if (!Array.isArray(stats))
+        return [];
+
+    const seen = new Set(known.map(c => c?.login?.toLowerCase()));
+    return stats
+        .filter(s => s?.author?.login && !seen.has(s.author.login.toLowerCase()))
+        .map(s => ({
+            login: s.author.login,
+            avatar_url: s.author.avatar_url,
+            html_url: s.author.html_url,
+            contributions: s.total,
+        }));
 }
 
 function _appendRelease(list, release, withSeparator) {
