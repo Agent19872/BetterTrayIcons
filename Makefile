@@ -23,9 +23,8 @@ help:
 	@echo "  make clean      Remove generated files"
 	@echo "  make uninstall  Remove the locally installed extension"
 
-pack: $(ZIP)
 
-$(ZIP):
+pack:
 	gnome-extensions pack \
 		--podir=po \
 		$$(for f in schemas/*.gschema.xml; do echo "--schema=$$f"; done) \
