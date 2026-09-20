@@ -158,6 +158,8 @@ export class ApplicationsPage extends Adw.PreferencesPage {
             const badges = flavor ? [{text: flavor, variant: 'info'}] : [];
             if (app.is_background_proxy)
                 badges.push({text: _('Background App'), variant: 'info'});
+            if (app.is_foreign)
+                badges.push({text: _('Panel Applet'), variant: 'info'});
 
             this._appsGroup.add(createActionRow({
                 title: displayName || _('Unknown App'),

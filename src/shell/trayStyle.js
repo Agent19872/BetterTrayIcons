@@ -53,7 +53,7 @@ export function connectColorSetChanges(settings, run) {
 }
 
 export function refreshTrayStyle(actor, iconActor, settings) {
-    iconActor.set_icon_size(settings.get_int('icon-size'));
+    iconActor?.set_icon_size(settings.get_int('icon-size'));
 
     const {enableCustom, baseStyle, hoverStyle} = trayIconStyleFor(actor, settings);
     applyPanelClasses(actor, iconActor, enableCustom);

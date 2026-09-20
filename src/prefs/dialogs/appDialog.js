@@ -3,7 +3,7 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk';
 import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-import {setAppConfigValue, deleteAppConfig, displayAppName, formatAppName, orderedAppIds, readVisibleOrder, setAppPriorities, getAppConfigMap} from '../../shared/appConfig.js';
+import {setAppConfigValue, deleteAppConfig, defaultAppName, displayAppName, orderedAppIds, readVisibleOrder, setAppPriorities, getAppConfigMap} from '../../shared/appConfig.js';
 import {resolveIcon, themeProbeKey} from '../../shared/iconLoading.js';
 import {clearIds, connectScoped, debounceTo, removeTimer} from '../../shared/lifecycle.js';
 import {createButton, createIconButton} from '../components/button.js';
@@ -60,7 +60,7 @@ export default class AppDialog extends Adw.Dialog {
             page.add(noticeGroup);
         }
 
-        const defaultName = formatAppName(this._data.title || this._appId);
+        const defaultName = defaultAppName(this._data, this._appId);
 
         const group = new Adw.PreferencesGroup({
             title: _('Configuration'),
@@ -114,7 +114,9 @@ export default class AppDialog extends Adw.Dialog {
 
         group.add(this._buildPositionRow());
 
-        if (!(this._data.is_wine || this._data.is_proton)) {
+        // A foreign item is drawn by the extension that handed it in, so an icon
+        // of ours would never reach it.
+        if (!(this._data.is_wine || this._data.is_proton || this._data.is_foreign)) {
             group.add(this._buildCustomIconRow());
             // States and badges come from SNI and LauncherEntry, and an XEmbed
             // item has neither the properties nor a resolvable desktop id, so
@@ -128,6 +130,8 @@ export default class AppDialog extends Adw.Dialog {
 
         const dangerGroup = new Adw.PreferencesGroup({title: _('Danger Zone')});
         page.add(dangerGroup);
+        if (this._data.is_foreign)
+            this._syncForeignDanger(dangerGroup);
 
         const deleteButton = createButton({
             label: _('Forget'),
@@ -188,6 +192,15 @@ export default class AppDialog extends Adw.Dialog {
     // from what the panel shows.
     async _positionOrder() {
         return await readVisibleOrder() ?? orderedAppIds(this._settings);
+    }
+
+    // Forgetting a foreign item that still stands would take a name and a slot
+    // from its owner, and a hidden one is only put away with the owner still
+    // there. Once the owner is gone for good nobody else can clear the entry.
+    async _syncForeignDanger(group) {
+        group.visible = false;
+        const order = await this._positionOrder();
+        group.visible = !this._data.is_hidden && !order.includes(this._appId);
     }
 
     async _syncPositionRow() {

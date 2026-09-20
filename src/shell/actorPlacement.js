@@ -41,7 +41,7 @@ export function moveActorToIndex(actor, parent, index) {
 }
 
 export function connectSurfaceChanges(actor, run) {
-    actor.connect('parent-set', () => {
+    return actor.connect('parent-set', () => {
         if (actor.get_parent())
             run();
     });

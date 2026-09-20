@@ -27,9 +27,15 @@ const RUNTIME_APP_CONFIG_FIELDS = Object.freeze([
     'is_proton',
     'is_xembed',
     'is_background_proxy',
+    'is_foreign',
     'packaging',
     'migrated_to',
 ]);
+
+// The item lives only while the extension that handed it in is loaded here,
+// so the entry stays off the sync path rather than reaching a host where
+// nothing answers to the id.
+export const isForeignConfig = entry => entry?.is_foreign === true;
 
 const TRAY_CONFIG_RENDER_FIELDS = Object.freeze([
     'is_hidden',
@@ -92,6 +98,14 @@ export function displayAppName(config, fallbackId = null) {
     const custom = config.custom_title;
     if (typeof custom === 'string' && custom)
         return custom;
+    return defaultAppName(config, fallbackId);
+}
+
+export function defaultAppName(config, fallbackId = null) {
+    // The owner hands in a name meant for the user, and cutting at the last
+    // dot would leave a fragment of it.
+    if (isForeignConfig(config) && config.title)
+        return config.title;
     return formatAppName(config.title || fallbackId);
 }
 
@@ -146,6 +160,11 @@ function _saveSyncMeta(settings, meta) {
 }
 
 function userConfigFields(entry) {
+    // Nothing at all for a foreign item, so the signature that arms the auto
+    // push never moves when one arrives, goes or is reordered.
+    if (isForeignConfig(entry))
+        return {};
+
     const own = {};
     // Sorted so the hash and the signature don't depend on insertion order.
     for (const key of Object.keys(entry).sort()) {

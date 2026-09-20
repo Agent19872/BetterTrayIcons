@@ -182,7 +182,7 @@ export class DraggableTrayIcon extends GObject.Object {
     }
 }
 
-function findIcon(actor) {
+export function findIcon(actor) {
     if (actor instanceof St.Icon)
         return actor;
     for (const child of actor.get_children()) {
@@ -205,7 +205,7 @@ export function setupIconDragSource({
     actor,
     appId,
     settings,
-    tooltip,
+    tooltip = null,
     onForwardedDragStateChange = null,
 }) {
     const draggable = new DraggableTrayIcon(actor, appId, isDragging => {
@@ -213,7 +213,7 @@ export function setupIconDragSource({
             actor.opacity = isDragging ? DRAGGING_SOURCE_OPACITY : 255;
             // notify::hover does not re-fire if the pointer never left the icon,
             // a tooltip shown before the drag would stick.
-            tooltip.hide();
+            tooltip?.hide();
         }
         onForwardedDragStateChange?.(isDragging);
     });

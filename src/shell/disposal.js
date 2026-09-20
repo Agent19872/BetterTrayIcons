@@ -2,8 +2,15 @@
 // string carries no disposed marker, so probing is both noisy and blind.
 const _destroyedActors = new WeakSet();
 
+export function watchDisposal(actor, onDestroy = null) {
+    return actor.connect('destroy', () => {
+        _destroyedActors.add(actor);
+        onDestroy?.();
+    });
+}
+
 export function trackDisposal(actor) {
-    actor.connect('destroy', () => _destroyedActors.add(actor));
+    watchDisposal(actor);
     return actor;
 }
 

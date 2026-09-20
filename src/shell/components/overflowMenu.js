@@ -4,6 +4,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {generateBoxStyle, popupUsesLightStyle} from '../trayStyle.js';
 import {createPanelMenu, destroyMenuSafely} from '../popupMenus.js';
+import {FOREIGN_ACTOR_PROP} from '../api/foreignItems.js';
 import {ITEM_SPACING_PX, ICON_MARGIN_PX, DEFAULT_ICON_PADDING_PX} from '../../const.js';
 
 const OVERFLOW_GRID_MIN_ROW_HEIGHT_PX = 24;
@@ -112,11 +113,14 @@ export class OverflowMenu {
         const horizontalItemMargin = sideSum('margin', ['left', 'right'], ICON_MARGIN_PX * 2);
         const verticalItemMargin = sideSum('margin', ['top', 'bottom'], 0);
 
+        // A foreign child is drawn by someone else and would stretch every
+        // cell to its own width.
+        const ownChildren = this._container.get_children()
+            .filter(child => child.visible && !child[FOREIGN_ACTOR_PROP]);
         // The settings math sums padding and margin only, so a border or a
         // badge measures wider and FlowLayout then fits fewer per row than the
         // pinned width claims.
-        const shown = this._container.get_children().filter(child => child.visible);
-        const largestOf = measure => Math.max(...shown.map(measure));
+        const largestOf = measure => Math.max(...ownChildren.map(measure), 0);
 
         const singleItemWidth = Math.max(iconSize + horizontalButtonPadding + horizontalItemMargin,
             largestOf(child => child.get_preferred_width(-1)[1]));

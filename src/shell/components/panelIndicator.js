@@ -15,6 +15,7 @@ import {
     slotIndexAt,
     dragStageCoords,
 } from '../features/dropTarget.js';
+import {FOREIGN_ACTOR_PROP} from '../api/foreignItems.js';
 import {OverflowMenu} from './overflowMenu.js';
 import {ToggleButton} from './toggleButton.js';
 
@@ -220,6 +221,17 @@ export const PanelIndicator = GObject.registerClass({GTypeName: 'BetterTrayIcons
 
             const sortedActors = [];
             for (const {actor, config} of this._liveIconEntries()) {
+                // A foreign actor's visibility belongs to whoever handed it in.
+                // Writing it would light an applet that hid itself back up as a
+                // clickable gap with nothing in it.
+                if (actor[FOREIGN_ACTOR_PROP]) {
+                    if (config?.is_hidden)
+                        actor.get_parent()?.remove_child(actor);
+                    else if (actor.visible)
+                        sortedActors.push(actor);
+                    continue;
+                }
+
                 // Wine-off wrappers and Passive items stay registered, the
                 // layout must not resurrect them.
                 const isHidden = config?.is_hidden ||
@@ -538,12 +550,26 @@ export const PanelIndicator = GObject.registerClass({GTypeName: 'BetterTrayIcons
         // destroy() and the destroy signal both land here, either can come
         // first.
         _teardown() {
+            this._releaseForeign();
             disconnectSignal(this, this, '_destroyHandlerId');
             clearIds(this, removeTimer,
                 '_layoutUpdateId', '_settleTimeoutId', '_menuRegrabId', '_reopenPopupId');
             this._releaseDragGrab();
             this._cancelPreview();
             this._sweepSlideWatches();
+        }
+
+        // A foreign actor belongs to the extension that handed it in, so it
+        // leaves the boxes before they take their children down with them.
+        // Clutter emits destroy before it removes any child, so this runs in time.
+        _releaseForeign() {
+            for (const [id, actor] of this._icons) {
+                if (!actor[FOREIGN_ACTOR_PROP])
+                    continue;
+                this._icons.delete(id);
+                if (!isDisposed(actor))
+                    actor.get_parent()?.remove_child(actor);
+            }
         }
 
         destroy() {

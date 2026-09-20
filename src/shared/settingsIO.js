@@ -2,7 +2,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 import {warn, warnOnce, error} from './logging.js';
-import {safeMapFromParsed, getAppConfigMap, getSyncMeta, mergeAppConfigs, syncMetaForReplace} from './appConfig.js';
+import {safeMapFromParsed, getAppConfigMap, getSyncMeta, isForeignConfig, mergeAppConfigs, syncMetaForReplace} from './appConfig.js';
 import {readFileBytes, readFileText, probePaths} from './asyncIo.js';
 import {BADGE_POSITIONS} from '../const.js';
 import {ACCENT_COLOR_VALUE} from './accentColor.js';
@@ -86,8 +86,11 @@ export function importSettingsFromJSON(settings, data, iconPaths, {merge = false
                 value = JSON.stringify(merged.map);
                 syncMeta = merged.meta;
             } else {
-                value = JSON.stringify(incoming);
                 syncMeta = syncMetaForReplace(incoming, data._app_config_meta, fallbackTs);
+                // No export carries a foreign entry, and the extension that
+                // handed the item in is standing right now, so a replace would
+                // take a live item's name and slot away.
+                value = JSON.stringify(Object.assign(incoming, _standingForeign(settings)));
             }
         }
 
@@ -280,7 +283,7 @@ function _exportSettingsToJSON(settings) {
         if (key === 'app-configs' && typeof value === 'string') {
             try {
                 value = JSON.parse(value);
-                Object.values(value).forEach(config => _collapseIconPaths(config, homeDir));
+                _prepareAppConfigsForExport(value, homeDir);
             } catch { /* keep raw string */ }
         }
 
@@ -293,6 +296,24 @@ function _exportSettingsToJSON(settings) {
     exportData['_app_config_meta'] = getSyncMeta(settings);
 
     return exportData;
+}
+
+function _standingForeign(settings) {
+    const kept = Object.create(null);
+    for (const [appId, config] of Object.entries(getAppConfigMap(settings))) {
+        if (isForeignConfig(config))
+            kept[appId] = config;
+    }
+    return kept;
+}
+
+function _prepareAppConfigsForExport(map, homeDir) {
+    for (const [appId, config] of Object.entries(map)) {
+        if (isForeignConfig(config))
+            delete map[appId];
+        else
+            _collapseIconPaths(config, homeDir);
+    }
 }
 
 function _collapseIconPaths(config, homeDir) {

@@ -35,7 +35,7 @@ export default class BetterTrayIconsExtension extends Extension {
     enable() {
         // Up before the deferred setup below. A peer that looks the moment the
         // shell reports us active would find no api and never knock again.
-        this.api = new ApiHub(this, () => this._indicator);
+        this.api = new ApiHub(this, () => this._indicator, () => this._settings);
 
         this.initTranslations();
 
@@ -77,6 +77,8 @@ export default class BetterTrayIconsExtension extends Extension {
             this._connectSettings(['tray-order', 'tray-position'], () => {
                 placeIndicatorInPanel(this._trayButton, this._settings);
             });
+
+            this.api.placeForeignItems();
 
             enableLauncherEntries();
 
