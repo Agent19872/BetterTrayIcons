@@ -4,7 +4,7 @@ import Gdk from 'gi://Gdk';
 import GObject from 'gi://GObject';
 import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-import {clearIds, connectScoped, debounceTo, removeTimer} from '../../shared/lifecycle.js';
+import {connectScoped, debounceTo} from '../../shared/lifecycle.js';
 import {clearChildren, createBox, createLabel} from './text.js';
 import {createButton, createIconButton} from './button.js';
 import {createFileFilter, openFileChooser} from './dialog.js';
@@ -139,7 +139,7 @@ export default class IconPickerDialog extends Adw.PreferencesDialog {
             input_purpose: Gtk.InputPurpose.DIGITS,
         });
 
-        this._totalPageLabel = createLabel('/ 1', ['dim-label']);
+        this._totalPageLabel = createLabel('/ 1', ['dimmed']);
 
         this._nextPageButton = createIconButton(NEXT_ICON_NAME, {tooltip: _('Next')});
 
@@ -407,11 +407,6 @@ export default class IconPickerDialog extends Adw.PreferencesDialog {
             title: _('Select Image'),
             filters: [filter],
         }, path => entryWidget.set_text(path));
-    }
-
-    vfunc_dispose() {
-        clearIds(this, removeTimer, '_inputTimeoutId');
-        super.vfunc_dispose();
     }
 }
 

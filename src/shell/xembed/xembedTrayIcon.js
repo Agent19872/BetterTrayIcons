@@ -159,6 +159,7 @@ export class XEmbedTrayIcon {
         }
         // Clutter recycles event objects, so copy before deferring.
         const eventCopy = event.copy();
+        clearIds(this, removeTimer, '_pendingClickId');
         this._pendingClickId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
             this._pendingClickId = 0;
             if (!this._isDestroyed && this._icon)

@@ -6,8 +6,8 @@ import {gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js'
 
 import {clearIds, debounceTo, disposeAll, removeTimer} from '../../shared/lifecycle.js';
 import {isDisposed, trackDisposal} from '../disposal.js';
-import {computeToggleStyle, applyPanelClasses} from '../trayStyle.js';
-import {createPanelMenu, destroyMenuSafely} from '../popupMenus.js';
+import {computeToggleStyle, applyPanelClasses, motionAllowed} from '../trayStyle.js';
+import {createPanelMenu, destroyMenuSafely, POPUP_ANIMATION_NONE} from '../popupMenus.js';
 import {ClickController} from '../features/clickController.js';
 
 const HOVER_MENU_ACTION = 'action-menu';
@@ -111,7 +111,10 @@ export class ToggleButton {
             return;
 
         this._iconAngle = angle;
-        if (!this._settings.get_boolean('toggle-icon-rotate-animate')) {
+        if (!this._settings.get_boolean('toggle-icon-rotate-animate') || !motionAllowed()) {
+            // A turn already running would outlive the plain assignment and
+            // leave the icon askew.
+            this._icon.remove_transition('rotation-angle-z');
             this._icon.rotation_angle_z = angle;
             return;
         }
@@ -244,7 +247,7 @@ export class ToggleButton {
 
         this._actionMenuOverflowItem = new PopupMenu.PopupMenuItem(_('Open Overflow Menu'));
         this._actionMenuOverflowItem.connect('activate', () => {
-            this._actionMenu.close();
+            this._actionMenu.close(POPUP_ANIMATION_NONE);
             if (this.actor.visible)
                 this._overflowMenu.open();
         });
@@ -252,7 +255,7 @@ export class ToggleButton {
 
         const prefsItem = new PopupMenu.PopupMenuItem(_('Open Settings'));
         prefsItem.connect('activate', () => {
-            this._actionMenu.close();
+            this._actionMenu.close(POPUP_ANIMATION_NONE);
             this._openPreferences();
         });
         this._actionMenu.addMenuItem(prefsItem);

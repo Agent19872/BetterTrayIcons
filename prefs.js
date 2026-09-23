@@ -15,7 +15,6 @@ const WINDOW_HEIGHT_PX = 700;
 
 export default class BetterTrayIconsPrefs extends ExtensionPreferences {
     fillPreferencesWindow(window) {
-        this.initTranslations();
         const settings = this.getSettings();
 
         // Icon themes ship these inconsistently, proton resolves in none and

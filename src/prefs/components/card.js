@@ -132,7 +132,7 @@ function _buildStagedCard({preview, bleed, title, subtitle}) {
     if (title)
         footer.append(_createCardCaption(title, ['caption-heading'], CARD_TITLE_MAX_CHARS, 'start'));
     if (subtitle)
-        footer.append(_createCardCaption(subtitle, ['caption', 'dim-label'], CARD_SUBTITLE_MAX_CHARS, 'start'));
+        footer.append(_createCardCaption(subtitle, ['caption', 'dimmed'], CARD_SUBTITLE_MAX_CHARS, 'start'));
 
     const box = createBox({halign: 'fill'});
     box.append(stage);
@@ -166,7 +166,7 @@ function _buildCaptionedCard({avatar, iconName, iconSize, title, subtitle}) {
     if (title)
         box.append(_createCardCaption(title, ['caption-heading'], CARD_TITLE_MAX_CHARS, 'center'));
     if (subtitle)
-        box.append(_createCardCaption(subtitle, ['caption', 'dim-label'], CARD_SUBTITLE_MAX_CHARS, 'center'));
+        box.append(_createCardCaption(subtitle, ['caption', 'dimmed'], CARD_SUBTITLE_MAX_CHARS, 'center'));
 
     return box;
 }

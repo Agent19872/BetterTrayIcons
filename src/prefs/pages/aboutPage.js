@@ -6,7 +6,6 @@ import GObject from 'gi://GObject';
 import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 import {error} from '../../shared/logging.js';
-import {disconnectAll} from '../../shared/lifecycle.js';
 import {fetchJson, fetchBytes, isCancelledError} from '../../shared/asyncIo.js';
 import {createAvatar, createImage, createPicture, createTextureFromBytes, bindLogoToTheme} from '../components/image.js';
 import {createBox, createLabel} from '../components/text.js';
@@ -58,7 +57,6 @@ export class AboutPage extends Adw.PreferencesPage {
         this._extensionDir = extensionDir;
         this._metadata = metadata;
         this._settings = settings;
-        this._themeSignals = [];
         this._cancellable = new Gio.Cancellable();
 
         this._buildUI();
@@ -142,7 +140,7 @@ export class AboutPage extends Adw.PreferencesPage {
 
         const disclaimerLabel = createLabel(
             _('Provided "as is", without warranty. The authors are not liable for damages.'),
-            ['dim-label', 'caption'],
+            ['dimmed', 'caption'],
             {wrap: true, xalign: 0, margin_top: 12, margin_bottom: 12, margin_start: 12, margin_end: 12}
         );
         legalGroup.add(disclaimerLabel);
@@ -171,7 +169,7 @@ export class AboutPage extends Adw.PreferencesPage {
             visible: false,
         });
 
-        const fallbackLabel = createLabel('BetterTrayIcons', ['display-3', 'dim-label'], {visible: false});
+        const fallbackLabel = createLabel('BetterTrayIcons', ['display-3', 'dimmed'], {visible: false});
 
         footerBox.append(logo);
         footerBox.append(fallbackLabel);
@@ -182,7 +180,7 @@ export class AboutPage extends Adw.PreferencesPage {
         // page, so defer it until the page is shown.
         const mapId = this.connect('map', () => {
             this.disconnect(mapId);
-            this._themeSignals.push(bindLogoToTheme(logo, fallbackLabel, this._assetsDir, 'logo.svg'));
+            bindLogoToTheme(logo, fallbackLabel, this._assetsDir, 'logo.svg');
         });
     }
 
@@ -302,7 +300,7 @@ export class AboutPage extends Adw.PreferencesPage {
             group.remove(loadingRow);
 
             if (data.length === 0) {
-                const noContributorsLabel = createLabel(_('No contributors found'), ['dim-label'], {halign: 'center', margin_top: 12, margin_bottom: 12});
+                const noContributorsLabel = createLabel(_('No contributors found'), ['dimmed'], {halign: 'center', margin_top: 12, margin_bottom: 12});
                 group.add(noContributorsLabel);
                 return;
             }
@@ -357,13 +355,6 @@ export class AboutPage extends Adw.PreferencesPage {
                 return;
             error(`Failed to load avatar for ${url}`, e);
         }
-    }
-
-    vfunc_unroot() {
-        this._cancellable?.cancel();
-        this._cancellable = null;
-        disconnectAll(this, Adw.StyleManager.get_default(), '_themeSignals');
-        super.vfunc_unroot();
     }
 }
 

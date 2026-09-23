@@ -25,6 +25,12 @@ export function sessionUsesLightStyle() {
     return St.Settings.get().color_scheme !== St.SystemColorScheme.PREFER_DARK;
 }
 
+// 51 has its own reduced motion switch, 49 and 50 do not know the enum.
+export function motionAllowed() {
+    return St.ReducedMotion === undefined ||
+        St.Settings.get().reducedMotion !== St.ReducedMotion.REDUCE;
+}
+
 function panelUsesLightStyle() {
     return Main.getStyleVariant() === 'light';
 }

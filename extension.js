@@ -14,6 +14,7 @@ import {placeIndicatorInPanel, TrayButton} from './src/shell/components/trayButt
 import {clearIconCaches} from './src/shell/icons/iconResolver.js';
 import {enableLauncherEntries, disableLauncherEntries} from './src/shell/features/launcherEntries.js';
 import {clearItemSplits} from './src/shell/identity/itemSplit.js';
+import {clearMenuProxyClass} from './src/shell/sni/dbusMenuClient.js';
 
 import {ApiHub} from './src/shell/api/apiHub.js';
 import {PanelGuest} from './src/shell/api/panelGuest.js';
@@ -37,10 +38,6 @@ export default class BetterTrayIconsExtension extends Extension {
         // shell reports us active would find no api and never knock again.
         this.api = new ApiHub(this, () => this._indicator, () => this._settings);
 
-        this.initTranslations();
-
-        // After the domain is bound, the title thunk runs the moment the peer
-        // takes the registration.
         this._panelGuest = new PanelGuest();
         this._panelGuest.enable(this);
 
@@ -51,6 +48,36 @@ export default class BetterTrayIconsExtension extends Extension {
             this._realEnable();
             return GLib.SOURCE_REMOVE;
         });
+    }
+
+    disable() {
+        // Modules survive a disable, so a peer holding this would keep getting
+        // a destroyed actor.
+        this.api?.destroy();
+        this.api = null;
+
+        this._panelGuest?.disable();
+        this._panelGuest = null;
+
+        clearIds(this, removeTimer, '_enableTimeoutId', '_syncDebounceId', '_autoPushDebounceId');
+        disconnectSignal(this, this._settings, '_autoPushSignalId');
+        disconnectAll(this, this._settings, '_settingsSignals');
+        disconnectSignal(this, this._fileMonitor, '_fileMonitorSignalId');
+
+        disposeAll(this, 'cancel', '_fileMonitor', '_syncCancellable');
+        disposeAll(this, 'disable', '_backgroundAppsProxyWatcher', '_backgroundApps', '_xembedBridge', '_sniWatcher');
+        // The indicator first, a parent destroying its children never reaches its
+        // own destroy() override.
+        disposeAll(this, 'destroy', '_indicator', '_trayButton');
+        disableLauncherEntries();
+        clearDetachedMenuManager();
+        clearMenuLayer();
+        clearIconCaches();
+        clearSeenCache();
+        clearItemSplits();
+        clearMenuProxyClass();
+        clearWarnedOnce();
+        this._settings = null;
     }
 
     async _realEnable() {
@@ -216,35 +243,5 @@ export default class BetterTrayIconsExtension extends Extension {
     _connectSettings(keys, handler) {
         for (const key of keys)
             this._settingsSignals.push(this._settings.connect(`changed::${key}`, handler));
-    }
-
-    disable() {
-        // Modules survive a disable, so a peer holding this would keep getting
-        // a destroyed actor.
-        this.api?.destroy();
-        this.api = null;
-
-        this._panelGuest?.disable();
-        this._panelGuest = null;
-
-        clearIds(this, removeTimer, '_enableTimeoutId', '_syncDebounceId', '_autoPushDebounceId');
-        disconnectSignal(this, this._settings, '_autoPushSignalId');
-        disconnectAll(this, this._settings, '_settingsSignals');
-        disconnectSignal(this, this._fileMonitor, '_fileMonitorSignalId');
-
-        disposeAll(this, 'cancel', '_fileMonitor', '_syncCancellable');
-        disposeAll(this, 'disable', '_backgroundAppsProxyWatcher', '_backgroundApps', '_xembedBridge', '_sniWatcher');
-        // The indicator first, a parent destroying its children never reaches its
-        // own destroy() override. The button then takes itself out of
-        // Main.panel.statusArea through the destroy handler the panel put on it.
-        disposeAll(this, 'destroy', '_indicator', '_trayButton');
-        disableLauncherEntries();
-        clearDetachedMenuManager();
-        clearMenuLayer();
-        clearIconCaches();
-        clearSeenCache();
-        clearItemSplits();
-        clearWarnedOnce();
-        this._settings = null;
     }
 }

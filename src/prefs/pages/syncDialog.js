@@ -49,7 +49,7 @@ export function openSyncDialog(parentWindow, settings, openJsonFileChooser) {
 
     // Typing in the path row fires per keystroke and each probe below can
     // stat a remote mount, so one shared debounce covers them all.
-    const timers = {refresh: 0};
+    const timers = {refresh: 0, initial: 0};
     refreshAll = ({immediate = false} = {}) => {
         if (immediate) {
             clearIds(timers, removeTimer, 'refresh');
@@ -59,13 +59,14 @@ export function openSyncDialog(parentWindow, settings, openJsonFileChooser) {
         debounceTo(timers, 'refresh', ENTRY_DEBOUNCE_MS, doRefresh);
     };
 
-    dialog.connect('closed', () => clearIds(timers, removeTimer, 'refresh'));
+    dialog.connect('closed', () => clearIds(timers, removeTimer, 'refresh', 'initial'));
 
     file.pathRow.connect('notify::text', () => refreshAll());
     connectScoped(dialog, settings, 'changed::enable-auto-sync', () => refreshAll({immediate: true}), 'closed');
     connectScoped(dialog, settings, 'changed::max-backups', () => backups.refresh(), 'closed');
 
-    GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+    timers.initial = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+        timers.initial = 0;
         refreshAll({immediate: true});
         return GLib.SOURCE_REMOVE;
     });

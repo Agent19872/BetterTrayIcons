@@ -28,6 +28,10 @@ const ICON_DATA_TYPE = new GLib.VariantType('ay');
 // Every icon builds its own client, the proxy wrapper is the same for all.
 let _MenuProxyClass = null;
 
+export function clearMenuProxyClass() {
+    _MenuProxyClass = null;
+}
+
 export class DBusMenuClient {
     constructor(busName, objectPath, interfaceXml, settings, onCloseMenu) {
         this._busName = busName;

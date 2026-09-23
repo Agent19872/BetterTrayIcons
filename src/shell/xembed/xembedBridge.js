@@ -36,6 +36,12 @@ export class XEmbedTrayBridge {
         this._sync();
     }
 
+    disable() {
+        disconnectSignal(this, this._settings, '_enableSignalId');
+        this._stop();
+        clearIdentityCaches();
+    }
+
     // Toggling the setting only flips wrapper visibility. unmanage_screen()
     // makes every Wine client drop its tray icon and most builds never
     // re-register on the MANAGER ClientMessage.
@@ -170,12 +176,6 @@ export class XEmbedTrayBridge {
     _afterWrapperDestroyed(rawIcon, wrapperId) {
         this._wrappers.delete(rawIcon);
         this._panelIndicator.removeIcon(wrapperId);
-    }
-
-    disable() {
-        disconnectSignal(this, this._settings, '_enableSignalId');
-        this._stop();
-        clearIdentityCaches();
     }
 }
 

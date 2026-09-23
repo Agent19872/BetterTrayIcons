@@ -247,7 +247,9 @@ function _bindingOf(button) {
     return 'left';
 }
 
+// Clutter.Settings.get_default is gone on mutter 51, the context getter
+// exists on every release we support.
 function _gestureSetting(property, fallback) {
-    const value = Clutter.Settings.get_default()[property];
-    return typeof value === 'number' && value > 0 ? value : fallback;
+    const value = global.stage.context.get_settings()[property];
+    return value > 0 ? value : fallback;
 }

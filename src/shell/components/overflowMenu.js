@@ -3,7 +3,7 @@ import Clutter from 'gi://Clutter';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {generateBoxStyle, popupUsesLightStyle} from '../trayStyle.js';
-import {createPanelMenu, destroyMenuSafely} from '../popupMenus.js';
+import {createPanelMenu, destroyMenuSafely, POPUP_ANIMATION_NONE} from '../popupMenus.js';
 import {FOREIGN_ACTOR_PROP} from '../api/foreignItems.js';
 import {ITEM_SPACING_PX, ICON_MARGIN_PX, DEFAULT_ICON_PADDING_PX} from '../../const.js';
 
@@ -209,11 +209,11 @@ export class OverflowMenu {
     }
 
     open() {
-        this._menu.open();
+        this._menu.open(POPUP_ANIMATION_NONE);
     }
 
     close() {
-        this._menu.close();
+        this._menu.close(POPUP_ANIMATION_NONE);
     }
 
     toggle() {

@@ -190,10 +190,18 @@ const COLOR_SCHEME_TEXT_CLASS = `${COLOR_SCHEME_PREFIX}Text`;
 const COLOR_SCHEME_TEXT_RE = new RegExp(
     `\\.${COLOR_SCHEME_TEXT_CLASS}\\s*\\{[^}]*?color\\s*:\\s*(#[0-9a-f]{3,8}|rgba?\\([^)]*\\))`, 'i');
 
+// GtkSvg drops a rule it cannot parse and it has no attribute selectors, so
+// the elements those rules used to reach carry a marker class instead.
+const TINT_FILL_CLASS = 'bti-tint-fill';
+const TINT_INHERIT_CLASS = 'bti-tint-inherit';
+const TINT_NO_FILL_CLASS = 'bti-tint-no-fill';
+const TINT_STROKE_CLASS = 'bti-tint-stroke';
+
 // Only parts naming no color take the tint, and without the inherit rule the
 // children of a `<g fill>` group lose their own.
 const _tintColoredCss = (color, neutralText) =>
-    `svg{color:${color}}*:not([fill]){fill:${color}}[fill] *{fill:inherit}${neutralText
+    `svg{color:${color}}.${TINT_FILL_CLASS}{fill:${color}}` +
+    `.${TINT_INHERIT_CLASS}{fill:inherit}${neutralText
         ? `.${COLOR_SCHEME_TEXT_CLASS},.foreground,.foreground-fill{color:${color};fill:${color}}`
         : ''}`;
 
@@ -202,8 +210,8 @@ const _tintColoredCss = (color, neutralText) =>
 // toolkit does.
 const _tintMonoCss = color =>
     `*{fill:${color}!important;color:${color}}` +
-    '[fill="none"]{fill:none!important}' +
-    `[stroke]:not([stroke="none"]){stroke:${color}!important}`;
+    `.${TINT_NO_FILL_CLASS}{fill:none!important}` +
+    `.${TINT_STROKE_CLASS}{stroke:${color}!important}`;
 
 // Both toolkits classify by file name alone (st-icon-theme.c
 // icon_uri_is_symbolic), so a mono icon under a plain name renders black.
@@ -290,7 +298,7 @@ function _tintedSvg(text, color, size) {
     const css = chroma
         ? _tintColoredCss(color, _isNeutralTextClass(text))
         : _tintMonoCss(color);
-    const body = chroma ? _retintNeutrals(text, color) : text;
+    const body = _markTintTargets(chroma ? _retintNeutrals(text, color) : text, chroma);
     const end = body.lastIndexOf('</svg');
     if (end < 0)
         return null;
@@ -302,6 +310,79 @@ function _tintedSvg(text, color, size) {
 function _retintNeutrals(text, color) {
     return text.replace(DECLARED_COLOR_RE, (declaration, value) =>
         _isChromatic(_parseRgb(value)) ? declaration : declaration.replace(value, color));
+}
+
+// Comments, CDATA and processing instructions are matched so a `<` inside one
+// never reads as a tag, and quoted values keep a `>` from ending the tag.
+const SVG_NODE_RE =
+    /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<!DOCTYPE(?:[^<>[]|\[[\s\S]*?\])*>|<(\/?)([A-Za-z_][^\s/>]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g;
+
+const SVG_ATTR_RE = /([A-Za-z_][\w.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+
+const CLASS_ATTR_RE = /(?<![\w.:-])class\s*=\s*(["'])([^"']*)\1/;
+
+function _markTintTargets(text, chroma) {
+    const fillHolders = [];
+    let fillAncestors = 0;
+
+    return text.replace(SVG_NODE_RE, (node, closing, name, attrs) => {
+        if (name === undefined)
+            return node;
+        if (closing) {
+            if (fillHolders.pop())
+                fillAncestors--;
+            return node;
+        }
+
+        const values = _attrValues(attrs);
+        const marks = chroma
+            ? _coloredMarks(values, fillAncestors)
+            : _monoMarks(values);
+
+        if (!attrs.trimEnd().endsWith('/')) {
+            fillHolders.push(values.has('fill'));
+            if (values.has('fill'))
+                fillAncestors++;
+        }
+
+        return marks.length ? _withMarks(node, name, values, marks) : node;
+    });
+}
+
+function _attrValues(attrs) {
+    const values = new Map();
+    SVG_ATTR_RE.lastIndex = 0;
+    let match;
+    while ((match = SVG_ATTR_RE.exec(attrs)) !== null)
+        values.set(match[1], match[2] ?? match[3]);
+    return values;
+}
+
+// The two stay mutually exclusive, GtkSvg does not resolve a tie between two
+// class rules by source order.
+function _coloredMarks(values, fillAncestors) {
+    if (fillAncestors > 0)
+        return [TINT_INHERIT_CLASS];
+    return values.has('fill') ? [] : [TINT_FILL_CLASS];
+}
+
+function _monoMarks(values) {
+    const marks = [];
+    if (values.get('fill') === 'none')
+        marks.push(TINT_NO_FILL_CLASS);
+    const stroke = values.get('stroke');
+    if (stroke !== undefined && stroke !== 'none')
+        marks.push(TINT_STROKE_CLASS);
+    return marks;
+}
+
+function _withMarks(node, name, values, marks) {
+    const added = marks.join(' ');
+    if (values.has('class'))
+        return node.replace(CLASS_ATTR_RE, (_attr, quote, value) => `class=${quote}${value} ${added}${quote}`);
+
+    const head = `<${name}`;
+    return `${head} class="${added}"${node.slice(head.length)}`;
 }
 
 // GTK and St render the SVG at its own declared size, not the requested one

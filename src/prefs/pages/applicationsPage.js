@@ -5,7 +5,7 @@ import Gtk from 'gi://Gtk';
 import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 import {getAppConfigs, deleteAppConfig, resetAllAppConfigs, displayAppName} from '../../shared/appConfig.js';
-import {connectScoped, clearIds, debounceTo, removeTimer} from '../../shared/lifecycle.js';
+import {clearIds, connectScoped, debounceTo, removeTimer} from '../../shared/lifecycle.js';
 import {resolveIcon, probeIconPaths, themeProbeKey, tintedSymbolicIconMap} from '../../shared/iconLoading.js';
 import AppDialog from '../dialogs/appDialog.js';
 import {createButton, createIconButton} from '../components/button.js';
@@ -55,6 +55,7 @@ export class ApplicationsPage extends Adw.PreferencesPage {
         this._settings = settings;
         this._appsGroup = null;
         this._rebuildTimeoutId = 0;
+        this._forgetTimeoutId = 0;
         this._buildGeneration = 0;
 
         this._headerActions = null;
@@ -68,6 +69,9 @@ export class ApplicationsPage extends Adw.PreferencesPage {
         // The rows read this once while building, so without a rebuild they
         // keep whichever variant was current when the page was opened.
         connectScoped(this, this._settings, 'changed::enable-symbolic-icons', queueRebuild);
+
+        this.connect('unrealize', () =>
+            clearIds(this, removeTimer, '_rebuildTimeoutId', '_forgetTimeoutId'));
     }
 
     get headerActions() {
@@ -76,8 +80,8 @@ export class ApplicationsPage extends Adw.PreferencesPage {
     }
 
     // Probing before the teardown leaves the current list up on a slow mount
-    // instead of an empty page. Dispose bumps the generation counter below
-    // to drop an overtaken probe instead of rendering into a dead page.
+    // instead of an empty page. The generation counter drops an overtaken
+    // probe rather than rendering it over a newer list.
     _buildUI() {
         const gen = ++this._buildGeneration;
         const apps = getAppConfigs(this._settings);
@@ -198,7 +202,7 @@ export class ApplicationsPage extends Adw.PreferencesPage {
     }
 
     _cleanupLegacyIds(apps) {
-        _deleteAppConfigsStaggered(this._settings, apps.filter(a => isLegacyAppId(a.id)).map(a => a.id));
+        this._deleteAppConfigsStaggered(apps.filter(a => isLegacyAppId(a.id)).map(a => a.id));
     }
 
     _buildHeaderActions() {
@@ -227,8 +231,23 @@ export class ApplicationsPage extends Adw.PreferencesPage {
 
     _forgetAll() {
         const ids = getAppConfigs(this._settings).map(app => app.id);
-        _deleteAppConfigsStaggered(this._settings, ids, () =>
+        this._deleteAppConfigsStaggered(ids, () =>
             addToast(this._window, new Adw.Toast({title: _('All apps forgotten')})));
+    }
+
+    _deleteAppConfigsStaggered(appIds, onComplete) {
+        const [next, ...rest] = appIds;
+        if (!next) {
+            onComplete?.();
+            return;
+        }
+        deleteAppConfig(this._settings, next);
+        clearIds(this, removeTimer, '_forgetTimeoutId');
+        this._forgetTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, APP_FORGET_STAGGER_MS, () => {
+            this._forgetTimeoutId = 0;
+            this._deleteAppConfigsStaggered(rest, onComplete);
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _confirmResetAll() {
@@ -245,28 +264,9 @@ export class ApplicationsPage extends Adw.PreferencesPage {
         resetAllAppConfigs(this._settings);
         addToast(this._window, new Adw.Toast({title: _('All apps reset')}));
     }
-
-    vfunc_dispose() {
-        this._buildGeneration++;
-        clearIds(this, removeTimer, '_rebuildTimeoutId');
-        super.vfunc_dispose();
-    }
 }
 
 function isLegacyAppId(id) {
     return LEGACY_ID_PATTERNS.some(pattern => pattern.test(id));
-}
-
-function _deleteAppConfigsStaggered(settings, appIds, onComplete) {
-    const [next, ...rest] = appIds;
-    if (!next) {
-        onComplete?.();
-        return;
-    }
-    deleteAppConfig(settings, next);
-    GLib.timeout_add(GLib.PRIORITY_DEFAULT, APP_FORGET_STAGGER_MS, () => {
-        _deleteAppConfigsStaggered(settings, rest, onComplete);
-        return GLib.SOURCE_REMOVE;
-    });
 }
 

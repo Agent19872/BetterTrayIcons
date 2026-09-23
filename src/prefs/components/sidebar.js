@@ -156,7 +156,7 @@ function _createSidebarHeader(title, iconPath, splitView) {
     } catch { /* The text still names the sidebar */ }
     const labels = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL, valign: Gtk.Align.CENTER});
     labels.append(new Gtk.Label({label: title, halign: Gtk.Align.START, css_classes: ['heading']}));
-    labels.append(new Gtk.Label({label: _('Settings'), halign: Gtk.Align.START, css_classes: ['caption', 'dim-label']}));
+    labels.append(new Gtk.Label({label: _('Settings'), halign: Gtk.Align.START, css_classes: ['caption', 'dimmed']}));
     box.append(labels);
 
     const collapse = _createSidebarToggle(splitView);

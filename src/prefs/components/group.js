@@ -146,6 +146,6 @@ function _createSideSpinButton(settings, key, label, accessibleLabel) {
 
     const cell = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL, spacing: 5});
     cell.append(spin);
-    cell.append(new Gtk.Label({label, css_classes: ['caption', 'dim-label']}));
+    cell.append(new Gtk.Label({label, css_classes: ['caption', 'dimmed']}));
     return cell;
 }

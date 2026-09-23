@@ -4,8 +4,32 @@ import GdkPixbuf from 'gi://GdkPixbuf';
 import St from 'gi://St';
 import Shell from 'gi://Shell';
 
-import {resolveIcon, findIconInThemeAsync, buildSymbolicCandidates, orderThemedNames, writeCachedIcon, deleteCachedIcon, tintedSymbolicIcon, symbolicTint, clearTintCache, MONO_ASSET_SUFFIX_RE} from '../../shared/iconLoading.js';
-import {updateAppConfig, migrateLegacyConfig, claimAppId, getAppConfigMap, getAppConfigValue, setAppConfigValue, findStateIconEntry, recordSeenStateIcons, isVolatileIconName, stateNameOf, unreadBadgeEnabled, ATTENTION_STATE_KEY} from '../../shared/appConfig.js';
+import {
+    resolveIcon,
+    findIconInThemeAsync,
+    buildSymbolicCandidates,
+    orderThemedNames,
+    writeCachedIcon,
+    deleteCachedIcon,
+    tintedSymbolicIcon,
+    symbolicTint,
+    clearTintCache,
+    MONO_ASSET_SUFFIX_RE,
+} from '../../shared/iconLoading.js';
+import {
+    updateAppConfig,
+    migrateLegacyConfig,
+    claimAppId,
+    getAppConfigMap,
+    getAppConfigValue,
+    setAppConfigValue,
+    findStateIconEntry,
+    recordSeenStateIcons,
+    isVolatileIconName,
+    stateNameOf,
+    unreadBadgeEnabled,
+    ATTENTION_STATE_KEY,
+} from '../../shared/appConfig.js';
 import {readFileBytes, fileExists} from '../../shared/asyncIo.js';
 import {warnOnce} from '../../shared/logging.js';
 import {getItemAddress, refreshPropertyOnProxy, refreshStringOnProxy} from '../dbusCalls.js';

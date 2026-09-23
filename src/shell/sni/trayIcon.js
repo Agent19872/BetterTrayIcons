@@ -1,7 +1,17 @@
 import GLib from 'gi://GLib';
 
 import {warn, warnOnce} from '../../shared/logging.js';
-import {configRenderDelta, getAppConfigMap, getAppConfigValue, setAppConfigValue, updateAppConfig, reseedIfForgotten, formatAppName, isVolatileIconName, unreadBadgeEnabled} from '../../shared/appConfig.js';
+import {
+    configRenderDelta,
+    getAppConfigMap,
+    getAppConfigValue,
+    setAppConfigValue,
+    updateAppConfig,
+    reseedIfForgotten,
+    formatAppName,
+    isVolatileIconName,
+    unreadBadgeEnabled,
+} from '../../shared/appConfig.js';
 import {clearIds, debounceTo, disconnectSignal, disconnectAll, disposeAll, removeTimer, ruleDispatcher} from '../../shared/lifecycle.js';
 import {getItemAddress, refreshPropertyOnProxy, refreshStringOnProxy} from '../dbusCalls.js';
 import {identifyApp, resolveTrayIcon} from '../icons/iconResolver.js';

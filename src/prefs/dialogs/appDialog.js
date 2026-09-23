@@ -40,6 +40,7 @@ export default class AppDialog extends Adw.Dialog {
 
         this._buildUI();
         pinDialogWidth(this, APP_DIALOG_WIDTH_PX);
+        this.connect('closed', () => this._flushPendingName());
     }
 
     _buildUI() {
@@ -321,11 +322,10 @@ export default class AppDialog extends Adw.Dialog {
         return key ? this._iconPaths.get(key) : null;
     }
 
-    vfunc_dispose() {
-        // A close inside the debounce window must not drop the typed name.
-        if (this._debounceId)
-            this._updateValue('custom_title', this._nameRow.text);
+    _flushPendingName() {
+        if (!this._debounceId)
+            return;
         clearIds(this, removeTimer, '_debounceId');
-        super.vfunc_dispose();
+        this._updateValue('custom_title', this._nameRow.text);
     }
 }

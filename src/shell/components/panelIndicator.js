@@ -6,7 +6,7 @@ import * as DND from 'resource:///org/gnome/shell/ui/dnd.js';
 
 import {getAppConfigMap, setAppPriorities, byPriorityThenAppId, publishVisibleOrder, clearVisibleOrder} from '../../shared/appConfig.js';
 import {clearIds, debounceTo, disconnectAll, disconnectSignal, disposeAll, removeTimer} from '../../shared/lifecycle.js';
-import {connectColorSetChanges} from '../trayStyle.js';
+import {connectColorSetChanges, motionAllowed} from '../trayStyle.js';
 import {isDisposed, trackDisposal} from '../disposal.js';
 import {moveActorToIndex} from '../actorPlacement.js';
 import {
@@ -473,7 +473,7 @@ export const PanelIndicator = GObject.registerClass({GTypeName: 'BetterTrayIcons
             actors.forEach((actor, index) => {
                 const isInline = index < visibleCount;
                 const parent = isInline ? this._visibleBox : this._overflowMenu.container;
-                if (shouldSlide) {
+                if (shouldSlide && motionAllowed()) {
                     this._slideFromCurrent(actor, index * DRAG_SLIDE_STAGGER_MS);
                 } else {
                     // A reparent kills a running slide mid-value, the icon

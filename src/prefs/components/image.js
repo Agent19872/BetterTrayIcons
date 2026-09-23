@@ -4,6 +4,7 @@ import Adw from 'gi://Adw';
 import GdkPixbuf from 'gi://GdkPixbuf';
 
 import {error} from '../../shared/logging.js';
+import {connectScoped} from '../../shared/lifecycle.js';
 import {withAlign} from './text.js';
 
 export function createPicture(params = {}) {
@@ -63,9 +64,8 @@ export function bindLogoToTheme(logo, fallback, assetsDir, darkFile) {
         }
     };
 
-    const handlerId = Adw.StyleManager.get_default().connect('notify::dark', update);
+    connectScoped(logo, Adw.StyleManager.get_default(), 'notify::dark', update);
     update();
-    return handlerId;
 }
 
 function _readSvgString(assetsDir, filename) {

@@ -15,7 +15,18 @@ const RAISED_MENU_GAP_PX = 8;
 const RAISED_MENU_CSS =
     `-arrow-rise: 0px; -boxpointer-gap: ${RAISED_MENU_GAP_PX}px; margin-bottom: 0px;`;
 
-export const POPUP_ANIMATION_NONE = 0;
+// Menus on 51 take an options object, 49 and 50 a BoxPointer flag, and
+// PopupMenuBase only grew open and close on 51.
+const MENU_TAKES_PARAMS = PopupMenu.PopupMenuBase.prototype.open !== undefined;
+
+export function menuAnimation(animate) {
+    if (MENU_TAKES_PARAMS)
+        return {animate};
+    return animate ? BoxPointer.PopupAnimation.FULL : BoxPointer.PopupAnimation.NONE;
+}
+
+export const POPUP_ANIMATION_NONE = menuAnimation(false);
+export const POPUP_ANIMATION_FULL = menuAnimation(true);
 
 let _menuLayer = null;
 
@@ -122,6 +133,12 @@ export function destroyMenuSafely(menu) {
         menu.close(POPUP_ANIMATION_NONE);
 
     Main.panel.menuManager.removeMenu(menu);
+
+    // On 51 destroy leaves the menu's key controller on the source actor, and
+    // our popup icons all share one dummy cursor.
+    if (menu._keyController)
+        menu.sourceActor?.remove_action(menu._keyController);
+
     menu.destroy();
 }
 
@@ -173,7 +190,7 @@ export class FlyoutMenu extends PopupMenu.PopupMenu {
     _onCapturedEvent(event) {
         const type = event.type();
         if (type === Clutter.EventType.KEY_PRESS)
-            return this._onKeyPress(event);
+            return this._handleFlyoutKey(event);
 
         const isPress = type === Clutter.EventType.BUTTON_PRESS ||
             type === Clutter.EventType.TOUCH_BEGIN;
@@ -186,16 +203,16 @@ export class FlyoutMenu extends PopupMenu.PopupMenu {
         for (const menu of chain) {
             if (menu === pressed)
                 break;
-            menu.close(BoxPointer.PopupAnimation.FULL);
+            menu.close(POPUP_ANIMATION_FULL);
         }
         // The click that closes everything must not also hit what is behind
         return pressed ? Clutter.EVENT_PROPAGATE : Clutter.EVENT_STOP;
     }
 
-    _onKeyPress(event) {
+    _handleFlyoutKey(event) {
         const symbol = event.get_key_symbol();
         if (symbol === Clutter.KEY_Escape) {
-            this.close(BoxPointer.PopupAnimation.FULL);
+            this.close(POPUP_ANIMATION_FULL);
             return Clutter.EVENT_STOP;
         }
 
@@ -225,7 +242,7 @@ export function menuChainFrom(menu) {
 
 export function closeMenuChain(menu) {
     for (const link of menuChainFrom(menu))
-        link.close();
+        link.close(POPUP_ANIMATION_NONE);
 }
 
 // A menu taller than its side of the icon makes the box pointer flip

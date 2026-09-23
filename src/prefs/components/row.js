@@ -81,7 +81,7 @@ function _createWrapRow(title, subtitle, controls) {
             halign: Gtk.Align.START,
             wrap: true,
             xalign: 0,
-            css_classes: ['caption', 'dim-label'],
+            css_classes: ['caption', 'dimmed'],
         }));
     }
 
@@ -338,7 +338,18 @@ export function bindVisibility(settings, key, widget, targetValue) {
     connectScoped(widget, settings, `changed::${key}`, updateState);
 }
 
-export function createActionRow({title, subtitle = '', prefixIcon = null, prefixWidget = null, suffixIcon = null, suffixWidgets = [], headerSuffix = null, badge = null, activatable = false, onActivate = null}) {
+export function createActionRow({
+    title,
+    subtitle = '',
+    prefixIcon = null,
+    prefixWidget = null,
+    suffixIcon = null,
+    suffixWidgets = [],
+    headerSuffix = null,
+    badge = null,
+    activatable = false,
+    onActivate = null,
+}) {
     const row = new Adw.ActionRow({
         title,
         subtitle,

@@ -16,16 +16,20 @@ export const PREVIEW_STAGE_HEIGHT_PX = Object.freeze({panel: 104, popup: 160});
 
 let _instanceCount = 0;
 
-// The guides area covers the whole stage and stays out of picking, so the
-// sample keeps its hover states.
+// A Box rather than a bare Gtk.Widget, its dispose unparents the children and
+// a JS dispose override is skipped while the GC runs. The guides area stays
+// out of picking so the sample keeps its hover states.
 const PreviewStage = GObject.registerClass({GTypeName: 'BetterTrayIconsPreviewStage'},
-    class PreviewStage extends Gtk.Widget {
+    class PreviewStage extends Gtk.Box {
         _init(height) {
             super._init({
                 css_classes: ['bti-preview-backdrop'],
                 overflow: Gtk.Overflow.HIDDEN,
                 hexpand: true,
             });
+            // GTK skips measure and size_allocate on a widget that has a
+            // layout manager, and the box brings one.
+            this.set_layout_manager(null);
             this._height = height;
             this._sample = null;
             this._guides = new Gtk.DrawingArea({can_target: false, visible: false});
@@ -60,14 +64,6 @@ const PreviewStage = GObject.registerClass({GTypeName: 'BetterTrayIconsPreviewSt
                 }), -1);
             }
             this._guides.size_allocate(new Gdk.Rectangle({x: 0, y: 0, width, height}), -1);
-        }
-
-        vfunc_dispose() {
-            this._sample?.unparent();
-            this._sample = null;
-            this._guides?.unparent();
-            this._guides = null;
-            super.vfunc_dispose();
         }
     });
 

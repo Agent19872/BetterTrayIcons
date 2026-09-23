@@ -5,7 +5,8 @@
   "version-name": "3.2.4",
   "shell-version": [
     "49",
-    "50"
+    "50",
+    "51"
   ],
   "url": "https://github.com/nexaknight/BetterTrayIcons",
   "settings-schema": "org.gnome.shell.extensions.bettertrayicons",
