@@ -10,10 +10,9 @@ const BACKGROUND_TOGGLE_WAIT_MS = 3000;
 
 const MICROSECONDS_PER_MS = 1000;
 
-// Setting visible alone does not hide the shell's Quick Settings entry for
-// windowless apps, its own _syncVisibility puts it back on every portal
-// change or session mode update (status/backgroundApps.js in the shell's
-// gresource). Only replacing that method on the instance makes it stay away.
+// Setting visible alone does not hide the Quick Settings entry for windowless
+// apps, its own _syncVisibility (status/backgroundApps.js) puts it back on
+// every portal or session mode change. Only an instance override holds.
 export class BackgroundApps {
     constructor(settings) {
         this._settings = settings;
@@ -53,9 +52,8 @@ export class BackgroundApps {
 
         const toggle = this._findToggle();
         if (!toggle) {
-            // Quick Settings populates optional items through dynamic imports
-            // after extensions are enabled, so this one can still be missing on
-            // the first _sync(), see
+            // Quick Settings populates optional items through dynamic imports after
+            // extensions are enabled, so this one can still be missing on the first _sync()
             // https://discourse.gnome.org/t/main-panel-statusarea-quicksettings-system-is-undefined/16827
             this._awaitToggle();
             return;

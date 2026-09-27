@@ -10,7 +10,7 @@ export function safeBounds(actor) {
     return [x, y, w, h];
 }
 
-// The allocation ignores a running slide, so this is where the actor will
+// The allocation ignores a running slide, so it reports where the actor will
 // settle, not where it is drawn right now.
 export function settledBounds(actor) {
     if (!actor.has_allocation())

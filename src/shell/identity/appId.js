@@ -53,8 +53,7 @@ export function sanitizeAppId(raw) {
 
 // The process is the identity of record, the SNI Id is only as good as the app
 // that sets it. WARP randomises it per launch, OpenRGB reports its AppImage
-// wrapper and Wooting ships a placeholder. Null keeps the item session-volatile
-// rather than minting a bus-name key that changes on every restart.
+// wrapper, Wooting ships a placeholder. Null keeps the item session-volatile.
 export function pickAppId({processName, rawId, pid, iconThemePath, iconName, title, packaging}) {
     if (packaging)
         return sanitizeAppId(`${packaging.kind}${PACKAGING_ID_SEPARATOR}${packaging.id}`);
@@ -98,9 +97,8 @@ export function joinSplitId(base, discriminator) {
 }
 
 // A faithful replay of the scheme this release replaces, so an existing entry
-// can be carried over instead of starting from defaults. It duplicates the
-// rules above on purpose, sharing them is how this broke once. This describes a
-// released artifact, so it is frozen. Do not "improve" it.
+// carries over instead of starting from defaults. Frozen, it duplicates the
+// rules above on purpose, sharing them is how this broke once.
 export function legacyAppId({legacyName, rawId, iconThemePath, iconName, title, busName}) {
     let candidate = null;
     if (legacyName) {

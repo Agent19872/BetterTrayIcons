@@ -87,7 +87,7 @@ function _appImageIdFromPath(path) {
 
 async function _flatpakIdFromSandbox(pid) {
     const info = await readProcFile(pid, 'root/.flatpak-info');
-    return info?.match(FLATPAK_INFO_NAME_RE)?.[1]?.trim() || null;
+    return info?.match(FLATPAK_INFO_NAME_RE)?.[1].trim() || null;
 }
 
 function _unescapeUnitName(name) {

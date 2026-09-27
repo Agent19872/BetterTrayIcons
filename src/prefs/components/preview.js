@@ -11,7 +11,7 @@ import {editsLightFor} from './scenes/sceneInk.js';
 import {ensurePrefsCss} from './text.js';
 
 // The stage keeps this height whatever the sample needs, so the rows below stay
-// put while spacing is edited. A larger sample is clipped, centered.
+// put while spacing is edited.
 export const PREVIEW_STAGE_HEIGHT_PX = Object.freeze({panel: 104, popup: 160});
 
 let _instanceCount = 0;

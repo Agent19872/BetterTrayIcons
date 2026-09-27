@@ -338,7 +338,6 @@ export class AboutPage extends Adw.PreferencesPage {
             group.add(createCardRow({cards}));
         } catch (e) {
             error('Contributor loader crash', e);
-            group.remove(loadingRow);
             const errorLabel = createLabel(_('Error loading data'), ['error'], {halign: 'center', margin_top: 12, margin_bottom: 12});
             group.add(errorLabel);
         }

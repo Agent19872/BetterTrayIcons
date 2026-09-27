@@ -90,8 +90,8 @@ function _runningByDesktopId(desktopId) {
         .find(app => app.get_id().toLowerCase() === wanted);
 }
 
-// Called from a debounce timeout, so the click's own time is gone and a zero
-// timestamp makes activate do nothing.
+// The click's own time is gone by here, and a zero timestamp makes activate
+// do nothing.
 export function raiseApp(app) {
     app.activate_full(-1, global.display.get_current_time_roundtrip());
 }

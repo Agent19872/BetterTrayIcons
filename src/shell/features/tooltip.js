@@ -148,7 +148,7 @@ export class Tooltip {
 
     destroy() {
         clearIds(this, removeTimer, '_timeoutId');
-        if (this._label && !isDisposed(this._label)) {
+        if (!isDisposed(this._label)) {
             this._label.get_parent().remove_child(this._label);
             this._label.destroy();
         }

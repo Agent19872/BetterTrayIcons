@@ -7,10 +7,9 @@ import {moveActorToIndex} from '../actorPlacement.js';
 
 const TRAY_ROLE = 'bti-tray';
 
-// Only what stands in Main.panel.statusArea can be found and moved by a peer
-// like Better Panel, and addToStatusArea takes nothing but a PanelMenu.Button.
-// PanelIndicator cannot be that button, PanelMenu's ButtonBox allocates only
-// its first child and the tray needs its own box layout.
+// Only what stands in Main.panel.statusArea can be found and moved by a peer,
+// and addToStatusArea takes nothing but a PanelMenu.Button. PanelIndicator
+// cannot be that button, PanelMenu's ButtonBox allocates only its first child.
 export const TrayButton = GObject.registerClass({GTypeName: 'BetterTrayIconsTrayButton'},
     class TrayButton extends PanelMenu.Button {
         _init(indicator) {

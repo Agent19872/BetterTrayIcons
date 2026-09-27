@@ -3,19 +3,24 @@ import GdkPixbuf from 'gi://GdkPixbuf';
 import GLib from 'gi://GLib';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
-import * as BoxPointer from 'resource:///org/gnome/shell/ui/boxpointer.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 import {warn} from '../../shared/logging.js';
 import {isCancelledError} from '../../shared/asyncIo.js';
+import {isChromatic, parseRgb, tintedSymbolicIcon} from '../../shared/iconLoading.js';
 import {clearIds, debounceTo, disposeAll, removeTimer} from '../../shared/lifecycle.js';
 import {isDisposed, trackDisposal} from '../disposal.js';
 import {stageScaleFactor} from '../actorPlacement.js';
-import {closeMenuChain, FlyoutMenu, submenuFitsInline} from '../popupMenus.js';
+import {themeIconFile} from '../icons/iconResolver.js';
+import {applyMenuBoxStyle, closeMenuChain, FlyoutMenu, menuAnimation, menuForegroundColor, POPUP_ANIMATION_FULL, POPUP_ANIMATION_NONE, submenuFitsInline} from '../popupMenus.js';
 
 const GEOMETRY_SETTLE_MS = 50;
 
 const YIELD_EVERY_N_ITEMS = 20;
+
+const MENU_ROOT_ID = 0;
+
+const LAYOUT_DEPTH_ALL = -1;
 
 const TOGGLE_STATE_ON = 1;
 
@@ -24,6 +29,12 @@ const MENU_ICON_SIZE = 16;
 const ICON_INDEX_AFTER_ORNAMENT = 1;
 
 const ICON_DATA_TYPE = new GLib.VariantType('ay');
+
+const RGBA_CHANNELS = 4;
+
+// A transparent pixel can carry any color, which would read as a colored
+// pixmap.
+const OPAQUE_ALPHA_MIN = 128;
 
 // Every icon builds its own client, the proxy wrapper is the same for all.
 let _MenuProxyClass = null;
@@ -80,13 +91,13 @@ export class DBusMenuClient {
         // Apps that fill the root only on demand answer the first GetLayout
         // with no children, and a childless root reads as "no menu at all".
         try {
-            await this._proxy.AboutToShowAsync(0);
+            await this._proxy.AboutToShowAsync(MENU_ROOT_ID);
         } catch { /* the root call is optional, not every server answers it */ }
 
         if (!this._proxy)
             return;
 
-        const [, layout] = await this._proxy.GetLayoutAsync(0, -1, []);
+        const [, layout] = await this._proxy.GetLayoutAsync(MENU_ROOT_ID, LAYOUT_DEPTH_ALL, []);
         if (!this._isLive(gnomeMenu))
             return;
 
@@ -102,9 +113,7 @@ export class DBusMenuClient {
         if (!unpacked)
             return;
 
-        const id = unpacked[0];
-        const props = unpacked[1];
-        const children = unpacked[2];
+        const [id, props, children] = unpacked;
 
         const getProp = (key, fallback) => {
             if (!props[key])
@@ -112,7 +121,7 @@ export class DBusMenuClient {
             return props[key] instanceof GLib.Variant ? props[key].deep_unpack() : props[key];
         };
 
-        if (id === 0) {
+        if (id === MENU_ROOT_ID) {
             await this._parseChildren(children, parent);
             return;
         }
@@ -167,7 +176,7 @@ export class DBusMenuClient {
             item.insert_child_at_index(icon, ICON_INDEX_AFTER_ORNAMENT);
 
             if (iconName)
-                icon.icon_name = iconName;
+                this._applyThemedIcon(icon, iconName);
             else
                 this._applyIconData(icon, iconData);
         }
@@ -202,13 +211,29 @@ export class DBusMenuClient {
             ? value : null;
     }
 
+    // A theme icon that is not symbolic keeps whatever grey its file declares,
+    // and on one of the two menu backgrounds that grey is invisible.
+    async _applyThemedIcon(icon, iconName) {
+        icon.icon_name = iconName;
+
+        const size = MENU_ICON_SIZE * stageScaleFactor();
+        const file = themeIconFile(iconName, size);
+        if (!file)
+            return;
+
+        const tinted = await tintedSymbolicIcon(file, menuForegroundColor(),
+            {size, cancellable: this._cancellable});
+        if (tinted && !isDisposed(icon))
+            icon.gicon = tinted;
+    }
+
     async _applyIconData(icon, iconData) {
         const stream = Gio.MemoryInputStream.new_from_bytes(iconData.get_data_as_bytes());
 
         try {
             const pixbuf = await GdkPixbuf.Pixbuf.new_from_stream_async(stream, this._cancellable);
             if (!isDisposed(icon))
-                icon.gicon = pixbuf;
+                icon.gicon = recoloredMonochrome(pixbuf, menuForegroundColor()) ?? pixbuf;
         } catch (e) {
             if (!isCancelledError(e))
                 warn(`DBusMenu icon-data decode failed: ${e.message}`);
@@ -228,14 +253,16 @@ export class DBusMenuClient {
     }
 
     _yieldToMainLoop() {
-        return new Promise(resolve => {
-            const id = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-                this._idleIds.delete(id);
-                resolve();
-                return GLib.SOURCE_REMOVE;
-            });
-            this._idleIds.add(id);
+        return new Promise(resolve => this._runOnIdle(resolve));
+    }
+
+    _runOnIdle(fn) {
+        const id = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            this._idleIds.delete(id);
+            fn();
+            return GLib.SOURCE_REMOVE;
         });
+        this._idleIds.add(id);
     }
 
     // The shell drops `checked` when the collapse starts, so the item snaps
@@ -285,7 +312,7 @@ export class DBusMenuClient {
         if (!this._proxy)
             return;
 
-        const [, [, , children]] = await this._proxy.GetLayoutAsync(id, -1, []);
+        const [, [, , children]] = await this._proxy.GetLayoutAsync(id, LAYOUT_DEPTH_ALL, []);
         if (!this._isLive(submenu))
             return;
 
@@ -296,17 +323,17 @@ export class DBusMenuClient {
     _showSubMenu(item, id, shown) {
         const flyout = this._flyoutOf(item);
         if (flyout) {
-            flyout.close(BoxPointer.PopupAnimation.FULL);
+            flyout.close(POPUP_ANIMATION_FULL);
             return;
         }
         if (!shown) {
-            item.menu.close(BoxPointer.PopupAnimation.FULL);
+            item.menu.close(POPUP_ANIMATION_FULL);
             return;
         }
 
         this._closeFlyoutsUnder(item._getTopMenu());
         if (submenuFitsInline(item.menu)) {
-            item.menu.open(BoxPointer.PopupAnimation.FULL);
+            item.menu.open(POPUP_ANIMATION_FULL);
             return;
         }
         this._openFlyout(item, id)
@@ -327,8 +354,12 @@ export class DBusMenuClient {
         flyout._setOpenedSubMenu = foldSiblingsOnly;
         this._bindFlyoutOwner(flyout);
         flyout.connect('open-state-changed', (menu, isOpen) => {
-            if (isOpen)
+            // Nothing else marks the item, its inline submenu stays shut
+            if (isOpen) {
+                item.add_style_pseudo_class('checked');
                 return;
+            }
+            item.remove_style_pseudo_class('checked');
             this._sendEvent(id, 'closed');
             this._dropFlyout(menu);
         });
@@ -344,7 +375,7 @@ export class DBusMenuClient {
         }
 
         this._pinMenuWidth(flyout);
-        flyout.open(BoxPointer.PopupAnimation.FULL);
+        flyout.open(POPUP_ANIMATION_FULL);
         this._sendEvent(id, 'opened');
     }
 
@@ -364,7 +395,7 @@ export class DBusMenuClient {
 
     _closeFlyoutsUnder(menu) {
         for (const flyout of this._flyoutsUnder(menu))
-            flyout.close(BoxPointer.PopupAnimation.NONE);
+            flyout.close(POPUP_ANIMATION_NONE);
     }
 
     _flyoutsUnder(menu) {
@@ -373,13 +404,10 @@ export class DBusMenuClient {
 
     // Still mid-emission when the flyout reports closed
     _dropFlyout(flyout) {
-        const id = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-            this._idleIds.delete(id);
+        this._runOnIdle(() => {
             if (this._flyouts.delete(flyout))
                 flyout.destroy();
-            return GLib.SOURCE_REMOVE;
         });
-        this._idleIds.add(id);
     }
 
     _isLive(menu) {
@@ -391,7 +419,7 @@ export class DBusMenuClient {
     _pinMenuWidth(topMenu) {
         // Natural widths come in stage pixels, CSS px would scale again.
         const width = Math.ceil(this._maxNaturalWidth(topMenu) / stageScaleFactor());
-        topMenu.box.style = `min-width: ${width}px`;
+        applyMenuBoxStyle(topMenu, `min-width: ${width}px`);
     }
 
     _maxNaturalWidth(menu) {
@@ -436,6 +464,53 @@ export class DBusMenuClient {
     }
 }
 
+// An app renders its menu pixmaps for its own theme, and one flat grey lands
+// invisible on the other one.
+function recoloredMonochrome(pixbuf, color) {
+    if (!pixbuf.get_has_alpha())
+        return null;
+
+    const rgb = parseRgb(color);
+    if (!rgb)
+        return null;
+
+    const pixels = pixbuf.get_pixels();
+    const rowstride = pixbuf.get_rowstride();
+    const width = pixbuf.get_width();
+    const height = pixbuf.get_height();
+    if (!isMonochrome(pixels, rowstride, width, height))
+        return null;
+
+    const [red, green, blue] = rgb;
+    const recolored = new Uint8Array(pixels);
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const offset = y * rowstride + x * RGBA_CHANNELS;
+            recolored[offset] = red;
+            recolored[offset + 1] = green;
+            recolored[offset + 2] = blue;
+        }
+    }
+
+    return GdkPixbuf.Pixbuf.new_from_bytes(GLib.Bytes.new(recolored),
+        pixbuf.get_colorspace(), true, pixbuf.get_bits_per_sample(), width, height, rowstride);
+}
+
+function isMonochrome(pixels, rowstride, width, height) {
+    let opaque = 0;
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const offset = y * rowstride + x * RGBA_CHANNELS;
+            if (pixels[offset + 3] < OPAQUE_ALPHA_MIN)
+                continue;
+            if (isChromatic([pixels[offset], pixels[offset + 1], pixels[offset + 2]]))
+                return false;
+            opaque++;
+        }
+    }
+    return opaque > 0;
+}
+
 function foldSiblingsOnly(submenu) {
     if (submenu)
         closeSubMenusIn(submenu._parent, true, submenu);
@@ -444,6 +519,6 @@ function foldSiblingsOnly(submenu) {
 function closeSubMenusIn(menu, animate, keepOpen = null) {
     for (const item of menu._getMenuItems()) {
         if (item.menu && item.menu !== keepOpen)
-            item.menu.close(animate);
+            item.menu.close(menuAnimation(animate));
     }
 }

@@ -33,18 +33,20 @@ export class OverflowMenu {
         this._enableCustomStyle = false;
         this._attached = false;
 
-        this._menu = createPanelMenu(this._toggleButton, menu => {
+        const configure = menu => {
             // The theme's .popup-menu rule pins a 15em min-width on the BoxPointer
-            // actor. BoxPointer._reposition then centers that wrapper on the toggle
-            // and clamps to the work-area, which pushes the popup far left when the
-            // toggle sits in the left panel box.
+            // actor, and _reposition centers that wrapper on the toggle, which
+            // pushes the popup far left when the toggle sits in the left box.
             menu.actor.set_style(POPUP_UNCLAMP_CSS);
 
             // Without these, menu.box comes with x_expand=true and the popup spans the monitor.
             menu.box.x_expand = false;
             menu.box.y_expand = false;
             menu.box.set_style(POPUP_UNCLAMP_CSS);
-        });
+        };
+
+        // The popup paints its own background from the user's settings.
+        this._menu = createPanelMenu(this._toggleButton, {configure, ownSurface: true});
 
         this._menu.connect('open-state-changed', (menu, isOpen) => {
             this._onOpenStateChanged(isOpen);
@@ -130,8 +132,8 @@ export class OverflowMenu {
         const columns = this._columnCount(itemCount, singleItemWidth);
         const rows = Math.ceil(itemCount / columns);
 
-        let finalWidth = columns * singleItemWidth + Math.max(0, columns - 1) * ITEM_SPACING_PX;
-        let finalHeight = rows * singleItemHeight + Math.max(0, rows - 1) * ITEM_SPACING_PX;
+        let finalWidth = columns * singleItemWidth + (columns - 1) * ITEM_SPACING_PX;
+        let finalHeight = rows * singleItemHeight + (rows - 1) * ITEM_SPACING_PX;
 
         finalWidth = Math.ceil(finalWidth) + FLOW_WIDTH_SLACK_PX;
         finalHeight = Math.ceil(finalHeight);
@@ -160,7 +162,7 @@ export class OverflowMenu {
     // the popup to a negative x where the leftmost icons can't be reached.
     _columnCount(itemCount, singleItemWidth) {
         const wanted = this._settings.get_string('overflow-layout-mode') === 'grid'
-            ? Math.max(1, this._settings.get_int('grid-column-limit'))
+            ? this._settings.get_int('grid-column-limit')
             : itemCount;
 
         const monitor = Main.layoutManager.findMonitorForActor(this._toggleButton) ??
@@ -200,9 +202,8 @@ export class OverflowMenu {
     }
 
     // The manager only takes its grab on the open transition, so a menu that
-    // stayed open while detached has to restate its open state to get the
-    // grab back. Closing and reopening would do it too, at the price of a
-    // visible flicker.
+    // stayed open while detached has to restate its open state to get it back.
+    // Closing and reopening would do it too, at the price of a flicker.
     restoreManagerGrab() {
         if (this._menu.isOpen)
             this._menu.emit('open-state-changed', true);

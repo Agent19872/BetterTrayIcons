@@ -642,6 +642,11 @@
             <summary>Long touch action on a tray icon</summary>
         </key>
 
+        <key name="tray-action-scroll" type="s">
+            <default>'forward'</default>
+            <summary>Scroll action on tray icons</summary>
+        </key>
+
         <!-- Actions: Toggle Button -->
         <key name="toggle-action-left" type="s">
             <default>'toggle'</default>

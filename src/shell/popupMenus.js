@@ -6,14 +6,17 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 import {isDisposed} from './disposal.js';
+import {shellUsesLightStyle} from './trayStyle.js';
+import {THEME_FOREGROUND} from '../shared/colorContrast.js';
 import {disconnectSignal} from '../shared/lifecycle.js';
 
 // Opening upwards, the theme's bottom margin and the arrow rise leave a
-// visible hole over the bar. Both get zeroed, -boxpointer-gap sets the
-// real distance instead.
+// visible hole over the bar.
 const RAISED_MENU_GAP_PX = 8;
 const RAISED_MENU_CSS =
     `-arrow-rise: 0px; -boxpointer-gap: ${RAISED_MENU_GAP_PX}px; margin-bottom: 0px;`;
+
+const LIGHT_MENU_CSS = `background-color: #ffffff; color: ${THEME_FOREGROUND.onLight};`;
 
 // Menus on 51 take an options object, 49 and 50 a BoxPointer flag, and
 // PopupMenuBase only grew open and close on 51.
@@ -45,7 +48,7 @@ export function clearMenuLayer() {
     _menuLayer = null;
 }
 
-export function createPanelMenu(sourceActor, configure = null) {
+export function createPanelMenu(sourceActor, {configure = null, ownSurface = false} = {}) {
     const menu = new PopupMenu.PopupMenu(sourceActor, 0.5, St.Side.TOP);
     menu.actor.add_style_class_name('panel-menu');
     configure?.(menu);
@@ -57,6 +60,8 @@ export function createPanelMenu(sourceActor, configure = null) {
         menu.actor.set_style(menuOpensUpwards(sourceActor)
             ? `${baseStyle} ${RAISED_MENU_CSS}`
             : baseStyle);
+        if (!ownSurface)
+            applyMenuBoxStyle(menu);
     });
 
     menuLayer().add_child(menu.actor);
@@ -64,7 +69,22 @@ export function createPanelMenu(sourceActor, configure = null) {
     return menu;
 }
 
-// Not "is it in the panel", Simple Taskbar moves Main.panel itself to the
+export function menuForegroundColor() {
+    return shellUsesLightStyle() ? THEME_FOREGROUND.onLight : THEME_FOREGROUND.onDark;
+}
+
+// The surface color and a pinned width share the box style, and whoever
+// writes it alone drops the other one.
+export function applyMenuBoxStyle(menu, pinnedWidthCss = null) {
+    if (pinnedWidthCss !== null)
+        menu._pinnedWidthCss = pinnedWidthCss;
+
+    const surface = shellUsesLightStyle() ? LIGHT_MENU_CSS : '';
+    const css = [surface, menu._pinnedWidthCss].filter(Boolean).join(' ');
+    menu.box.set_style(css || null);
+}
+
+// Not "is it in the panel", an extension can move Main.panel itself to the
 // bottom edge.
 function menuOpensUpwards(sourceActor) {
     const [x, y, width, height] = sourceRect(sourceActor);
@@ -95,8 +115,8 @@ function sourceRect(sourceActor) {
     ];
 }
 
-// Popup icons anchor to the dummy cursor, an intellihide panel (Dash to
-// Panel) otherwise slides away mid-menu and takes the menu with it.
+// Popup icons anchor to the dummy cursor, an intellihide panel otherwise
+// slides away mid-menu and takes the menu with it.
 export function menuAnchorFor(actor) {
     if (Main.panel.contains(actor))
         return actor;
@@ -142,9 +162,8 @@ export function destroyMenuSafely(menu) {
     menu.destroy();
 }
 
-// For a submenu the menu has no room to unfold. The shell's menu manager
-// would close the menu underneath, so the flyout grabs the shared layer
-// instead.
+// For a submenu with no room to unfold inline. It grabs the shared layer
+// itself, the shell's menu manager would close the menu underneath.
 export class FlyoutMenu extends PopupMenu.PopupMenu {
     constructor(item) {
         super(item, 0, St.Side.LEFT);
@@ -153,10 +172,12 @@ export class FlyoutMenu extends PopupMenu.PopupMenu {
         menuLayer().add_child(this.actor);
         this.actor.hide();
         this.connect('open-state-changed', (menu, isOpen) => {
-            if (isOpen)
-                this._takeGrab();
-            else
+            if (!isOpen) {
                 this._releaseGrab();
+                return;
+            }
+            applyMenuBoxStyle(this);
+            this._takeGrab();
         });
     }
 
@@ -199,7 +220,10 @@ export class FlyoutMenu extends PopupMenu.PopupMenu {
 
         const target = global.stage.get_event_actor(event);
         const chain = menuChainFrom(this);
-        const pressed = chain.find(menu => menu.actor.contains(target));
+        // Every link but the last hangs off a menu item. A press on that item
+        // runs its own toggle, closing here would let the release reopen it.
+        const toggled = chain.slice(0, -1).find(menu => menu.sourceActor.contains(target));
+        const pressed = toggled || chain.find(menu => menu.actor.contains(target));
         for (const menu of chain) {
             if (menu === pressed)
                 break;
@@ -230,7 +254,7 @@ export class FlyoutMenu extends PopupMenu.PopupMenu {
     }
 }
 
-export function menuChainFrom(menu) {
+function menuChainFrom(menu) {
     const chain = [menu];
     let current = menu;
     while (current.sourceActor instanceof PopupMenu.PopupBaseMenuItem) {

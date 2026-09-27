@@ -71,9 +71,8 @@ export class BackgroundAppsProxyIcon {
         });
 
         // The panel hides and orders actors from their app-configs entry, so
-        // those only reach this icon once the entry exists. The prefs process
-        // cannot reach Shell.AppSystem, so detected_icon and packaging are what
-        // let it render the icon and the badge.
+        // those only reach this icon once the entry exists. The prefs cannot
+        // reach Shell.AppSystem, detected_icon and packaging are what it draws.
         this._identitySeed = {
             title: this._app.get_name(),
             is_background_proxy: true,

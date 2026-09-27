@@ -222,10 +222,9 @@ export async function deleteBackup(path) {
 async function _writeSettingsFile(settings, path) {
     const data = _exportSettingsToJSON(settings);
 
-    // A pull applies the file's own settings, which the other process sees as a
-    // change and answers with a push. Without this it would spend a backup on
-    // an identical file and stamp its own host into _meta, so the sync dialog
-    // then credits this machine for settings it just received.
+    // A pull makes the other process see a change and push back. Without this
+    // it would spend a backup on an identical file and stamp its own host into
+    // _meta, so the sync dialog credits this machine for settings it received.
     if (await _fileAlreadyHolds(path, data))
         return;
 
@@ -267,7 +266,6 @@ function _exportSettingsToJSON(settings) {
     const exportData = {};
     const homeDir = GLib.get_home_dir();
 
-    // Used on import to skip changes this host wrote itself.
     exportData['_meta'] = {
         source: GLib.get_host_name(),
         timestamp: Date.now(),

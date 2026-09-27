@@ -45,11 +45,10 @@ export class DraggableTrayIcon extends GObject.Object {
     }
 
     setEnabled(enabled) {
-        const next = !!enabled;
-        if (next === this._enabled)
+        if (enabled === this._enabled)
             return;
 
-        if (next) {
+        if (enabled) {
             this._initDraggable();
             this._enabled = this._initialized;
         } else {
@@ -172,8 +171,7 @@ export class DraggableTrayIcon extends GObject.Object {
     }
 
     destroy() {
-        if (this._initialized)
-            this._teardownDraggable();
+        this._teardownDraggable();
         if (!isDisposed(this._actor) && this._actor._delegate === this)
             this._actor._delegate = null;
         this._actor = null;

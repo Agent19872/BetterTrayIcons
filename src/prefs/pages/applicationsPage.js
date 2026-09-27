@@ -20,9 +20,8 @@ const PAGE_REBUILD_DEBOUNCE_MS = 100;
 const ROW_ICON_PX = 32;
 
 // A forgotten app that is still running keeps its cached icon until the shell
-// re-resolves it, several awaited D-Bus round trips later. A shorter gap lets
-// the next deletion's app-configs write race that chain and strand
-// cached_icon_path on a file no snapshot ever wrote, OpenRGB does just that.
+// re-resolves it, several D-Bus round trips later. A shorter gap lets the
+// next deletion's write strand cached_icon_path, as OpenRGB does.
 const APP_FORGET_STAGGER_MS = 500;
 
 // Product names, so nothing to translate.

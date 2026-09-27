@@ -33,6 +33,9 @@ export class ToggleButton {
         this.actor = new St.Button({
             child: this._icon,
             style_class: 'panel-button better-tray-toggle-button',
+            // The layout pass owns this and only runs a debounce later, a
+            // button born visible flashes in the panel on every enable.
+            visible: false,
             reactive: true,
             can_focus: true,
             track_hover: true,
@@ -185,7 +188,6 @@ export class ToggleButton {
         }
     }
 
-    // The popup and the action menu land here alike.
     onMenuOpenStateChanged(isOpen) {
         this.updateState();
 

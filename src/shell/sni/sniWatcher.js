@@ -1,7 +1,7 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
-import {warn, error} from '../../shared/logging.js';
+import {warn, warnOnce, error} from '../../shared/logging.js';
 import {clearIds, disposeAll, removeTimer} from '../../shared/lifecycle.js';
 import {getItemAddress, callDBusDaemon} from '../dbusCalls.js';
 import {TrayIcon} from './trayIcon.js';
@@ -12,6 +12,10 @@ const INITIAL_SCAN_DELAY_MS = 500;
 const KDE_WATCHER_BUS_NAME = 'org.kde.StatusNotifierWatcher';
 
 const FREEDESKTOP_WATCHER_BUS_NAME = 'org.freedesktop.StatusNotifierWatcher';
+
+const WATCHER_INTERFACE_NAME = 'org.kde.StatusNotifierWatcher';
+
+const WATCHER_OBJECT_PATH = '/StatusNotifierWatcher';
 
 const DEFAULT_ITEM_OBJECT_PATH = '/StatusNotifierItem';
 
@@ -27,6 +31,7 @@ export class SniWatcher {
 
         this._kdeWatcherId = 0;
         this._freedesktopWatcherId = 0;
+        this._retryWatchId = 0;
         this._nameWatchers = new Map();
         this._disabled = false;
 
@@ -39,12 +44,32 @@ export class SniWatcher {
 
     enable() {
         this._disabled = false;
+        this._claimWatcher();
+    }
+
+    disable() {
+        this._disabled = true;
+        clearIds(this, removeTimer, '_scanTimeoutId');
+        clearIds(this, Gio.bus_unwatch_name, '_retryWatchId');
+        this._releaseWatcher();
+
+        this._items.forEach(item => item.destroy());
+        this._items.clear();
+        this._pending.clear();
+        this._nameWatchers.forEach(watcherId => Gio.bus_unwatch_name(watcherId));
+        this._nameWatchers.clear();
+    }
+
+    _claimWatcher() {
         try {
             const nodeInfo = Gio.DBusNodeInfo.new_for_xml(this._interfaces.watcher);
-            const interfaceInfo = nodeInfo.lookup_interface('org.kde.StatusNotifierWatcher');
+            const interfaceInfo = nodeInfo.lookup_interface(WATCHER_INTERFACE_NAME);
 
-            this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(interfaceInfo, this);
-            this._dbusImpl.export(Gio.DBus.session, '/StatusNotifierWatcher');
+            const impl = Gio.DBusExportedObject.wrapJSObject(interfaceInfo, this);
+            impl.export(Gio.DBus.session, WATCHER_OBJECT_PATH);
+            // Set after the export, the signal emitters below fire on any
+            // non null _dbusImpl.
+            this._dbusImpl = impl;
 
             this._hasScanned = false;
 
@@ -52,13 +77,9 @@ export class SniWatcher {
                 this._scheduleInitialScan();
             };
 
-            const onLost = name => {
-                warn(`SniWatcher: Failed to own ${name} (Bus contention or already running?)`);
-            };
-
-            // DO_NOT_QUEUE makes a second instance exit via onLost instead
-            // of waiting in the bus queue. REPLACE is omitted, it only takes
-            // the name from owners that opted in via ALLOW_REPLACEMENT.
+            // DO_NOT_QUEUE routes a second instance to _onWatcherTaken
+            // instead of the bus queue. REPLACE is omitted, it only takes the
+            // name from owners that opted in via ALLOW_REPLACEMENT.
             const ownFlags = Gio.BusNameOwnerFlags.DO_NOT_QUEUE;
 
             this._kdeWatcherId = Gio.bus_own_name(
@@ -67,7 +88,7 @@ export class SniWatcher {
                 ownFlags,
                 null,
                 onOwned,
-                () => onLost(KDE_WATCHER_BUS_NAME)
+                () => this._onWatcherTaken(KDE_WATCHER_BUS_NAME)
             );
 
             this._freedesktopWatcherId = Gio.bus_own_name(
@@ -76,12 +97,64 @@ export class SniWatcher {
                 ownFlags,
                 null,
                 onOwned,
-                () => onLost(FREEDESKTOP_WATCHER_BUS_NAME)
+                () => this._onWatcherTaken(FREEDESKTOP_WATCHER_BUS_NAME)
             );
         } catch (e) {
+            // Another tray extension in this shell got to the path first, both
+            // export onto the one session connection the shell process has.
+            if (e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.EXISTS)) {
+                this._onWatcherTaken(KDE_WATCHER_BUS_NAME);
+                return;
+            }
             error('SniWatcher: Failed to enable', e);
             this.disable();
         }
+    }
+
+    // A GError stack says nothing about the one thing that helps here, which
+    // tray extension to turn off.
+    async _onWatcherTaken(name) {
+        if (this._disabled)
+            return;
+
+        this._waitForWatcherName(name);
+
+        const owner = await this._nameOwner(name);
+        const holder = owner === Gio.DBus.session.get_unique_name()
+            ? `another tray extension inside this shell (${owner})`
+            : owner || 'another StatusNotifierWatcher';
+        warnOnce('watcher-taken',
+            `SniWatcher: ${name} is held by ${holder}. Turn that tray extension off, ` +
+            'this one takes the name over on its own.');
+    }
+
+    // Taking over the moment the other side lets go saves the user a relogin.
+    // One watch for the whole session, a re-armed one would fire itself on a
+    // name that is already gone.
+    _waitForWatcherName(name) {
+        if (this._retryWatchId)
+            return;
+
+        this._retryWatchId = Gio.bus_watch_name(
+            Gio.BusType.SESSION,
+            name,
+            Gio.BusNameWatcherFlags.NONE,
+            null,
+            () => this._retakeWatcher()
+        );
+    }
+
+    _retakeWatcher() {
+        if (this._disabled)
+            return;
+
+        this._releaseWatcher();
+        this._claimWatcher();
+    }
+
+    _releaseWatcher() {
+        clearIds(this, Gio.bus_unown_name, '_kdeWatcherId', '_freedesktopWatcherId');
+        disposeAll(this, 'unexport', '_dbusImpl');
     }
 
     _scheduleInitialScan() {
@@ -89,8 +162,8 @@ export class SniWatcher {
             return;
         this._hasScanned = true;
 
-        // Delay the scan to let name ownership propagate. Clients register
-        // their items only after they see the watcher appear on the bus.
+        // Clients register their items only after they see the watcher
+        // appear on the bus.
         this._scanTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, INITIAL_SCAN_DELAY_MS, () => {
             this._initialScan();
             this._scanTimeoutId = 0;
@@ -168,20 +241,24 @@ export class SniWatcher {
     }
 
     async _senderOwnsName(sender, name) {
+        return await this._nameOwner(name) === sender;
+    }
+
+    async _nameOwner(name) {
         try {
             const result = await callDBusDaemon(Gio.DBus.session,
                 'GetNameOwner', new GLib.Variant('(s)', [name]),
                 new GLib.VariantType('(s)'));
-            return result.deep_unpack()[0] === sender;
+            return result.deep_unpack()[0];
         } catch {
-            return false;
+            return null;
         }
     }
 
     _registerItem(busName, objectPath) {
         // The disabled check covers awaits (initial scan, owner check) that
         // resolve after disable() and would re-populate the cleared maps.
-        if (!this._itemProxyClass || this._disabled)
+        if (this._disabled)
             return;
 
         const id = getItemAddress(busName, objectPath);
@@ -218,7 +295,8 @@ export class SniWatcher {
                     (itemId, actor) => this._indicator.addIcon(itemId, actor),
                     itemId => this._onItemDestroyed(itemId),
                     () => this._indicator._handleIconClick(),
-                    forwardDragStateToIndicator(this._indicator)
+                    forwardDragStateToIndicator(this._indicator),
+                    () => this._indicator.queueUpdateLayout()
                 );
 
                 item.id = id;
@@ -278,18 +356,5 @@ export class SniWatcher {
 
         if (this._dbusImpl)
             this._dbusImpl.emit_signal('StatusNotifierItemUnregistered', GLib.Variant.new('(s)', [id]));
-    }
-
-    disable() {
-        this._disabled = true;
-        clearIds(this, removeTimer, '_scanTimeoutId');
-        clearIds(this, Gio.bus_unown_name, '_kdeWatcherId', '_freedesktopWatcherId');
-        disposeAll(this, 'unexport', '_dbusImpl');
-
-        this._items.forEach(item => item.destroy());
-        this._items.clear();
-        this._pending.clear();
-        this._nameWatchers.forEach(watcherId => Gio.bus_unwatch_name(watcherId));
-        this._nameWatchers.clear();
     }
 }

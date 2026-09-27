@@ -162,7 +162,7 @@ export class XEmbedTrayIcon {
         clearIds(this, removeTimer, '_pendingClickId');
         this._pendingClickId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
             this._pendingClickId = 0;
-            if (!this._isDestroyed && this._icon)
+            if (!this._isDestroyed)
                 this._icon.click(eventCopy);
             return GLib.SOURCE_REMOVE;
         });

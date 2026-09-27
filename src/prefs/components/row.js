@@ -16,8 +16,8 @@ import {buildGroupDialog} from './dialog.js';
 import {applyPathIcon, NEXT_ICON_NAME} from './icon.js';
 import {pushSubpage} from './sidebar.js';
 
-// Keeps the gear column on the actions page flush.
-const ACTION_DROPDOWN_WIDTH_PX = 240;
+// Keeps the dropdowns on the actions page flush.
+export const ACTION_DROPDOWN_WIDTH_PX = 240;
 
 const ROW_ICON_SIZE_PX = 24;
 
@@ -64,8 +64,8 @@ const CONFIG_ROW_BUILDERS = Object.freeze({
     color: (settings, spec) => _createColorRow(spec.title, settings, spec.key),
 });
 
-export function createComboRow({title, subtitle = '', settings, key, options, values}) {
-    const dropdown = _createBoundDropdown(settings, key, options, values, {label: title});
+export function createComboRow({title, subtitle = '', settings, key, options, values, width = -1}) {
+    const dropdown = _createBoundDropdown(settings, key, options, values, {width, label: title});
     return _createWrapRow(title, subtitle, [dropdown]);
 }
 
@@ -241,7 +241,6 @@ function _createColorRow(title, settings, key, {accentAware = false, parent = nu
     return row;
 }
 
-// Lives here rather than in dialog.js because it needs addConfigRows, and
 // dialog.js importing this module back would close an import cycle.
 function _openStyleDialog(parentWindow, settings, {title, items}) {
     const {group, present} = buildGroupDialog({

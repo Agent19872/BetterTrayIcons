@@ -24,11 +24,9 @@ const ICON_FILE_EXTENSIONS = Object.freeze(['.png', '.svg', '.xpm', '.ico']);
 // app pointing IconThemePath at a large tree can't stall a resolve.
 const ICON_THEME_TREE_MAX_DEPTH = 4;
 
-// A snap carries its revision ahead of the theme tree
-// (/snap/x/123/hicolor/48x48/apps/y.png), so the size is the last size-shaped
-// segment, not the first. The lookahead leaves the trailing slash behind so
-// /123/16x16/ still yields both. Scaled dirs (16x16@2x, 128x128@2) must match
-// too, or the last match falls back onto the revision.
+// A snap carries its revision ahead of the theme tree, so the size is the last
+// size-shaped segment, not the first. The lookahead keeps the trailing slash so
+// /123/16x16/ yields both, and scaled dirs (16x16@2x) have to match too.
 const ICON_THEME_SIZE_RE = /\/(\d+)(?:x\d+)?(?:@\d+x?)?(?=\/)/g;
 
 // Prefetched so no widget build stats. Theme lookups ride in the same map
@@ -184,7 +182,7 @@ const DECLARED_COLOR_RE = /(?:fill|stroke|stop-color|color)\s*[:=]\s*["']?\s*(#[
 
 // KDE paints an ordinary icon part with the text class and keeps the semantic
 // ones (PositiveText, NegativeText) for status, so only the text one may take
-// the tint. Papirus files a brand color under it, so it gets checked first.
+// the tint. Papirus files a brand color under it, so it comes first.
 const COLOR_SCHEME_PREFIX = 'ColorScheme-';
 const COLOR_SCHEME_TEXT_CLASS = `${COLOR_SCHEME_PREFIX}Text`;
 const COLOR_SCHEME_TEXT_RE = new RegExp(
@@ -215,8 +213,7 @@ const _tintMonoCss = color =>
 
 // Both toolkits classify by file name alone (st-icon-theme.c
 // icon_uri_is_symbolic), so a mono icon under a plain name renders black.
-// Matching none of the three leaves the icon's own paint alone, which keeps
-// grayscale logos intact.
+// Matching none of the three leaves grayscale logos with their own paint.
 const MONO_NAME_RE = new RegExp(`-(${MONO_VARIANT_PATTERN})\\.svg$`, 'i');
 const MONO_DIR_RE = new RegExp(`/(${MONO_VARIANT_PATTERN})/`);
 const MONO_CLASS_RE = new RegExp(
@@ -309,7 +306,7 @@ function _tintedSvg(text, color, size) {
 // Without this an icon that paints itself black sits invisible on a dark panel.
 function _retintNeutrals(text, color) {
     return text.replace(DECLARED_COLOR_RE, (declaration, value) =>
-        _isChromatic(_parseRgb(value)) ? declaration : declaration.replace(value, color));
+        isChromatic(parseRgb(value)) ? declaration : declaration.replace(value, color));
 }
 
 // Comments, CDATA and processing instructions are matched so a `<` inside one
@@ -427,7 +424,7 @@ function _declaresChroma(text) {
     DECLARED_COLOR_RE.lastIndex = 0;
     let match;
     while ((match = DECLARED_COLOR_RE.exec(text)) !== null) {
-        if (_isChromatic(_parseRgb(match[1])))
+        if (isChromatic(parseRgb(match[1])))
             return true;
     }
     return false;
@@ -435,10 +432,10 @@ function _declaresChroma(text) {
 
 function _isNeutralTextClass(text) {
     const declared = text.match(COLOR_SCHEME_TEXT_RE);
-    return !declared || !_isChromatic(_parseRgb(declared[1]));
+    return !declared || !isChromatic(parseRgb(declared[1]));
 }
 
-function _isChromatic(rgb) {
+export function isChromatic(rgb) {
     if (!rgb)
         return false;
     const [r, g, b] = rgb;
@@ -450,7 +447,7 @@ function _isChromatic(rgb) {
 // An unreadable value is refused, librsvg would render it black. Alpha stays
 // because libadwaita's own text color carries one.
 function _cssColor(tint) {
-    const rgb = _parseRgb(tint);
+    const rgb = parseRgb(tint);
     if (!rgb)
         return null;
     const [r, g, b, alpha] = rgb;
@@ -461,7 +458,7 @@ function _cssColor(tint) {
 
 // Colors reach us as #rgb and #rrggbb from gsettings, the same with a trailing
 // alpha from St's to_string, and rgb()/rgba() from GTK.
-function _parseRgb(color) {
+export function parseRgb(color) {
     const hex = color.trim().match(/^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
     if (hex) {
         const h = hex[1];
@@ -477,10 +474,8 @@ function _parseRgb(color) {
 }
 
 // GTK and St walk a multi-name icon differently (gtkicontheme.c themes-first,
-// st-icon-theme.c names-first). A name we know resolves goes first, that wins
-// under both. image-missing sits last because St paints nothing otherwise,
-// under GTK it would bury names further down the theme chain, and with no
-// theme answer yet it is left out so the render-time lookup decides.
+// st-icon-theme.c names-first), so a known-resolving name goes first and wins
+// under both. image-missing sits last for St, and waits for a theme answer.
 export function orderThemedNames(candidates, existing, themeKnown = true) {
     if (existing)
         return [existing, ...candidates.filter(n => n !== existing)];
@@ -536,8 +531,7 @@ export function deleteCachedIcon(appId) {
         return;
     const file = Gio.File.new_for_path(path);
     try {
-        if (file.query_exists(null))
-            file.delete(null);
+        file.delete(null);
     } catch { /* gone */ }
 }
 

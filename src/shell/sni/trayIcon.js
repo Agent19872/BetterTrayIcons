@@ -1,3 +1,4 @@
+import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
 
 import {warn, warnOnce} from '../../shared/logging.js';
@@ -41,8 +42,10 @@ const MENU_REOPEN_GUARD_MS = 200;
 
 const MENU_DROP_DELAY_MS = 0;
 
-// Keys that need a fresh resolve rather than a restyle. The color ones decide
-// the tint that goes into a symbolic icon's bytes, which no restyle can change.
+const SCROLL_ACTION_FORWARD = 'forward';
+
+// The color keys decide the tint that goes into a symbolic icon's bytes,
+// which no restyle can change.
 const ICON_RESOLVE_KEYS = Object.freeze([
     'icon-size',
     'enable-symbolic-icons',
@@ -51,7 +54,7 @@ const ICON_RESOLVE_KEYS = Object.freeze([
 ]);
 
 export class TrayIcon {
-    constructor(menuInterfaceXml, busName, objectPath, settings, proxy, onReady, onDestroy, onCloseMenu, onDragStateChange = null) {
+    constructor(menuInterfaceXml, busName, objectPath, settings, proxy, onReady, onDestroy, onCloseMenu, onDragStateChange = null, onStatusChange) {
         this._menuInterfaceXml = menuInterfaceXml;
         this.busName = busName;
         this._objectPath = objectPath;
@@ -61,6 +64,7 @@ export class TrayIcon {
         this._onDestroy = onDestroy;
         this._onCloseMenu = onCloseMenu;
         this._onDragStateChange = onDragStateChange;
+        this._onStatusChange = onStatusChange;
 
         this.id = getItemAddress(busName, objectPath);
         this.appId = null;
@@ -86,6 +90,8 @@ export class TrayIcon {
         this._tooltip = null;
         this._clickController = null;
         this._lastCloseTime = 0;
+        this._scrollCarryX = 0;
+        this._scrollCarryY = 0;
 
         this._setup();
     }
@@ -131,8 +137,7 @@ export class TrayIcon {
             this._swallow(this._updateTitle(), 'updateTitle');
             this._swallow(this._updateMenuPath(), 'updateMenuPath');
 
-            if (!this._isDestroyed)
-                this._onReady(this.id, this.actor);
+            this._onReady(this.id, this.actor);
         } catch (e) {
             warn(`TrayIcon: Ident/Update failed: ${e.message}`);
         }
@@ -230,7 +235,7 @@ export class TrayIcon {
     // the delay, freezing the icon, and would run the full pipeline per frame
     // for slower animations.
     _queueUpdate() {
-        if (this._isDestroyed || this._updateDeferId)
+        if (this._updateDeferId)
             return;
 
         const sinceLast = (GLib.get_monotonic_time() - this._lastUpdateRun) / 1000;
@@ -239,20 +244,18 @@ export class TrayIcon {
         this._updateDeferId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
             this._updateDeferId = 0;
             this._lastUpdateRun = GLib.get_monotonic_time();
-            if (!this._isDestroyed)
-                this._swallow(this._updateIcon(), 'updateIcon');
+            this._swallow(this._updateIcon(), 'updateIcon');
             return GLib.SOURCE_REMOVE;
         });
     }
 
     _queueTitleUpdate() {
-        if (this._isDestroyed || this._titleDeferId)
+        if (this._titleDeferId)
             return;
 
         this._titleDeferId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, TITLE_UPDATE_DEBOUNCE_MS, () => {
             this._titleDeferId = 0;
-            if (!this._isDestroyed)
-                this._swallow(this._updateTitle(), 'updateTitle');
+            this._swallow(this._updateTitle(), 'updateTitle');
             return GLib.SOURCE_REMOVE;
         });
     }
@@ -269,7 +272,7 @@ export class TrayIcon {
         this.actor.connect('notify::hover', this._guarded(() => {
             syncHoverStyle(this.actor);
 
-            if (this.actor.hover && this._tooltip && !this._tooltip._label.text)
+            if (this.actor.hover && !this._tooltip._label.text)
                 this._swallow(this._updateTitle(), 'updateTitle');
             syncTooltip(this.actor, this._tooltip, this._settings);
         }));
@@ -292,7 +295,35 @@ export class TrayIcon {
 
         this._draggable.setClickController(this._clickController);
 
+        this.actor.connect('scroll-event', (_actor, event) => this._onScroll(event));
+
         refreshTrayStyle(this.actor, this._iconActor, this._settings);
+    }
+
+    // Clutter sends a smooth and a discrete event per notch, reading both
+    // would double every step.
+    _onScroll(event) {
+        if (this._settings.get_string('tray-action-scroll') !== SCROLL_ACTION_FORWARD)
+            return Clutter.EVENT_PROPAGATE;
+        if (event.get_scroll_direction() !== Clutter.ScrollDirection.SMOOTH)
+            return Clutter.EVENT_PROPAGATE;
+
+        const [dx, dy] = event.get_scroll_delta();
+        this._scrollCarryX = this._sendScroll(this._scrollCarryX + dx, 'horizontal');
+        this._scrollCarryY = this._sendScroll(this._scrollCarryY + dy, 'vertical');
+        return Clutter.EVENT_STOP;
+    }
+
+    _sendScroll(accumulated, orientation) {
+        const steps = Math.trunc(accumulated);
+        if (!steps)
+            return accumulated;
+
+        this._proxy.ScrollRemote(steps, orientation, (_result, err) => {
+            if (err)
+                warnOnce(`Scroll:${this.appId}`, `${this.id} does not answer Scroll: ${err.message}`);
+        });
+        return accumulated - steps;
     }
 
     _executeAction(action) {
@@ -360,10 +391,9 @@ export class TrayIcon {
         if (this._isDestroyed)
             return;
 
-        // _queueUpdate only guards against a second timer, not a second run.
-        // The proxy roundtrips inside resolveTrayIcon take as long as the peer
-        // needs, so without a generation the slower answer wins and parks the
-        // icon on a stale status or pixmap.
+        // _queueUpdate guards against a second timer, not a second run.
+        // Without a generation the slower of two resolve roundtrips wins and
+        // parks the icon on a stale status or pixmap.
         const generation = ++this._updateGen;
 
         const {gicon, iconName, detected, status, pixmapHash, unchanged, badge} = await resolveTrayIcon(
@@ -387,8 +417,10 @@ export class TrayIcon {
         // to hide, and apps like KDE Connect park there instead of unregistering.
         const wasPassive = this.actor._isPassive;
         this.actor._isPassive = status === 'Passive';
-        if (wasPassive !== this.actor._isPassive)
+        if (wasPassive !== this.actor._isPassive) {
             this._applyStoredConfig();
+            this._onStatusChange();
+        }
 
         if (!unchanged)
             setIconContent(this._iconActor, gicon, iconName || 'image-missing');
@@ -409,10 +441,9 @@ export class TrayIcon {
         }
     }
 
-    // St already resolves the accent keyword and the panel default, which
-    // settings alone cannot, so a tinted icon matches what a themed one would
-    // look like. Off the stage it answers with its own default foreground
-    // instead of failing, which would tint the first frame black.
+    // St resolves the accent keyword and the panel default that settings
+    // alone cannot, so a tint matches a themed icon. Off the stage the node
+    // answers with its own foreground, which would tint the first frame black.
     _iconTint() {
         if (!this._iconActor.get_stage())
             return null;
@@ -474,7 +505,7 @@ export class TrayIcon {
     }
 
     async _contextMenu() {
-        if (this._isMenuLoading || this._isDestroyed)
+        if (this._isMenuLoading)
             return;
         if (this._menu?.isOpen) {
             this._menu.toggle();
@@ -544,8 +575,8 @@ export class TrayIcon {
         this._menu = createPanelMenu(menuAnchorFor(this.actor));
         trackDisposal(this._menu.actor);
 
-        // Hide Top Bar only stays put while Main.panel.menuManager.activeMenu
-        // is set, held either by this menu or by the open popup underneath.
+        // An auto-hiding panel only stays put while menuManager.activeMenu is
+        // set, held by this menu or by the open popup underneath.
         menuManagerFor(this.actor, this._settings).addMenu(this._menu);
 
         this._menu.connect('open-state-changed', (menu, isOpen) => {

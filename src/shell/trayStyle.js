@@ -31,14 +31,14 @@ export function motionAllowed() {
         St.Settings.get().reducedMotion !== St.ReducedMotion.REDUCE;
 }
 
-function panelUsesLightStyle() {
+export function shellUsesLightStyle() {
     return Main.getStyleVariant() === 'light';
 }
 
 export function popupUsesLightStyle(settings) {
     return settings.get_boolean('enable-custom-overflow-style')
         ? sessionUsesLightStyle()
-        : panelUsesLightStyle();
+        : shellUsesLightStyle();
 }
 
 // The popup background is in here because stock popup icons contrast with it.
@@ -73,7 +73,7 @@ export function trayIconStyleFor(actor, settings, {withColors = true} = {}) {
     const inPanel = Main.panel.contains(actor);
     return computeTrayIconStyle(settings, {
         withColors,
-        light: inPanel ? panelUsesLightStyle() : popupUsesLightStyle(settings),
+        light: inPanel ? shellUsesLightStyle() : popupUsesLightStyle(settings),
         inPanel,
     });
 }
@@ -151,7 +151,7 @@ export function computeToggleStyle(settings) {
         settings.get_boolean('toggle-inherit-icon-style') &&
         settings.get_boolean('enable-custom-icon-style');
 
-    const light = panelUsesLightStyle();
+    const light = shellUsesLightStyle();
 
     if (shouldInheritIcons) {
         const inheritedColor = resolveColor(settings, 'icon-color', light) || FALLBACK_ICON_COLOR;
@@ -193,12 +193,9 @@ export function generateBoxStyle(settings, prefix, options = {}) {
     let css = boxGeometryCss(settings, {spacingPrefix: prefix, radiusPrefix, minMargin});
 
     const schema = settings.settings_schema;
-    const bgKey = `${colorPrefix}-background-color`;
-    if (schema.has_key(bgKey)) {
-        const bg = resolveColor(settings, bgKey, light);
-        if (bg)
-            css += ` background-color: ${bg};`;
-    }
+    const bg = resolveColor(settings, `${colorPrefix}-background-color`, light);
+    if (bg)
+        css += ` background-color: ${bg};`;
     const fgKey = `${colorPrefix}-color`;
     if (schema.has_key(fgKey)) {
         const color = resolveColor(settings, fgKey, light);

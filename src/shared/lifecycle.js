@@ -37,9 +37,7 @@ export function debounceTo(target, prop, delayMs, fn) {
 export function disconnectSignal(target, source, prop) {
     if (!target[prop])
         return;
-    try {
-        source.disconnect(target[prop]);
-    } catch { /* source already disposed */ }
+    source.disconnect(target[prop]);
     target[prop] = 0;
 }
 
@@ -72,12 +70,7 @@ export function ruleDispatcher(rules) {
 // A dialog emits only `closed`, hence the event.
 export function connectScoped(target, source, signal, callback, event = null) {
     const id = source.connect_object(signal, callback, target, 0);
-    if (event) {
-        target.connect(event, () => {
-            try {
-                source.disconnect(id);
-            } catch { /* already gone with the target */ }
-        });
-    }
+    if (event)
+        target.connect(event, () => source.disconnect(id));
     return id;
 }

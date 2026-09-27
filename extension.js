@@ -129,11 +129,9 @@ export default class BetterTrayIconsExtension extends Extension {
         }
     }
 
-    // The service throws 'Already showing a prefs dialog' on a second call and
-    // the shell fires that call without a reply handler, so triggering the
-    // action again while the window was open did nothing at all. Every
-    // extension's dialog shares one wm_class and carries no app id, which
-    // leaves the title as the only thing naming the owner.
+    // A second call throws 'Already showing a prefs dialog' at a reply handler
+    // the shell never installed, so the open window has to be raised by hand.
+    // Every extension's dialog shares one wm_class, only the title names it.
     openPreferences() {
         const open = global.display.get_tab_list(Meta.TabList.NORMAL_ALL, null)
             .find(w => w.get_wm_class() === PREFS_WM_CLASS && w.get_title() === this.metadata.name);
@@ -176,8 +174,6 @@ export default class BetterTrayIconsExtension extends Extension {
                 if (isOwnSyncSource(data._meta))
                     return;
 
-                // Probe the icon paths before the flag goes up. They can sit on
-                // a network mount, and this runs on the shell's main loop.
                 const iconPaths = await probeImportIconPaths(data, this._syncCancellable);
                 if (!this._settings)
                     return;

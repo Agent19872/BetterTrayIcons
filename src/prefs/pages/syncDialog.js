@@ -330,7 +330,7 @@ function _buildBackupHistoryGroup(page, pathRow, dialog, toast, settings, onAfte
 
             expander.sensitive = true;
             expander.subtitle = `${backups.length} ${_('available')}`;
-        }).catch(() => { /* Listing failed, keep current rows */ });
+        }).catch(() => {});
     };
 
     return {refresh};

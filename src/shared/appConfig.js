@@ -230,11 +230,9 @@ function _dropTombstone(settings, appId) {
     }
 }
 
-// Merge two app-configs maps as a last-writer-wins element set. The newest
-// stamp across both hosts wins, a tombstone newer than the live entry deletes
-// it so a forget propagates, and an app only one host knows survives. A tie
-// keeps the live entry and, between two live ones, the greater content hash, so
-// both hosts reach the same result without coordinating.
+// Last-writer-wins element set. A tombstone newer than the live entry deletes
+// it so a forget propagates, a tie keeps the live entry and then the greater
+// content hash, so both hosts reach the same result without coordinating.
 export function mergeAppConfigs(localMap, localMeta, incomingMap, incomingMeta, incomingFallbackTs) {
     const now = _nextStamp(localMeta);
     const incomingEntries = incomingMeta?.entries ?? {};
@@ -516,11 +514,9 @@ export function setAppPriorities(settings, appIdsInOrder) {
     const map = getAppConfigMap(settings);
     const moving = new Set(ordered);
 
-    // Callers pass only the icons they can see. Numbering those alone leaves
-    // every app that isn't running above them, so the stored order is rebuilt
-    // whole and the listed ids are dealt back into the slots they held.
-    // Entries that never got a priority already sort below the numbered range,
-    // and leaving them out keeps the blob from gaining one per app ever seen.
+    // Callers pass only the icons they can see, so the stored order is rebuilt
+    // whole and the listed ids are dealt back into the slots they held. Entries
+    // without a priority stay out, they already sort below the numbered range.
     const slots = Object.keys(map)
         .filter(appId => !moving.has(appId) && map[appId].priority > 0)
         .concat(ordered)
@@ -601,15 +597,9 @@ export function releaseAppId(appId) {
     _claimedAppIds.delete(appId);
 }
 
-// The first app to claim a legacy key takes the entry with it, later claimants
-// copy it from the in-memory snapshot, because keys like 'main' or 'explorer'
-// were shared by apps that never should have shared config.
-//
-// A copy leaves the source in place for the case where the old key is still
-// somebody's current one, a snap and a native install both start from the entry
-// the user made before the two were told apart, and moving it would hand the
-// whole config to whichever registered first. The leftover row nothing owns can
-// be forgotten in the prefs, losing the settings cannot be undone.
+// Keys like 'main' or 'explorer' were shared by apps that should never have
+// shared config. The first claimant takes the entry, later ones copy it, and a
+// copy leaves the source because the old key may still be somebody's current one.
 export function migrateLegacyConfig(settings, legacyId, appId, {copy = false} = {}) {
     if (!legacyId || !appId || legacyId === appId)
         return;

@@ -3,10 +3,9 @@ import {joinSplitId} from './appId.js';
 
 const _items = new Map();
 
-// A process that publishes several tray items keys them all under its own name,
-// so one item's settings reached its siblings, update-notifier ships two and
-// hiding one hid both. Only a process that owns several falls back on the
-// items' own Ids, WARP mints a fresh one on every launch.
+// A process publishing several tray items keys them all under its own name, so
+// one item's settings reached its siblings (update-notifier ships two). Only
+// those fall back on the items' own Ids, WARP mints a fresh Id per launch.
 export function resolveItemId(settings, item) {
     _items.set(item.key, item);
 

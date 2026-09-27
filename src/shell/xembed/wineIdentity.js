@@ -90,8 +90,6 @@ function newIdentity() {
 }
 
 function mergeEnvIdentity(identity, env) {
-    if (!env.size)
-        return;
     if (env.has('STEAM_COMPAT_DATA_PATH') ||
         env.has('PROTON_LOG') ||
         env.has('STEAM_COMPAT_CLIENT_INSTALL_PATH')) {

@@ -291,7 +291,7 @@ export default class IconPickerDialog extends Adw.PreferencesDialog {
         const requestedPage = parseInt(inputEntry.text);
         const totalPages = Math.ceil(this._currentFilteredList.length / ITEMS_PER_PAGE) || 1;
         const isInRange = requestedPage >= 1 && requestedPage <= totalPages;
-        if (isNaN(requestedPage) || !isInRange)
+        if (!isInRange)
             return;
 
         // _updatePaginationUI writes the entry text itself, which fires 'changed' again.

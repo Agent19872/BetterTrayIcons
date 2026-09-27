@@ -2,7 +2,7 @@ import Adw from 'gi://Adw';
 import GObject from 'gi://GObject';
 import {gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
-import {createComplexActionRow, createComboRow, createActionRow} from '../components/row.js';
+import {ACTION_DROPDOWN_WIDTH_PX, createComplexActionRow, createComboRow, createActionRow} from '../components/row.js';
 import {createResetButton} from '../components/page.js';
 import {GEAR_ICON_NAME} from '../components/icon.js';
 import {createIconButton} from '../components/button.js';
@@ -85,6 +85,15 @@ export class ActionPage extends Adw.PreferencesPage {
             longOptions: this._trayLongOptions,
             longValues: this._trayLongValues,
         });
+
+        group.add(createComboRow({
+            title: _('Scroll'),
+            settings: this._settings,
+            key: 'tray-action-scroll',
+            options: [_('Forward to the App'), _('None')],
+            values: ['forward', 'nothing'],
+            width: ACTION_DROPDOWN_WIDTH_PX,
+        }));
     }
 
     _createToggleClickGroup() {

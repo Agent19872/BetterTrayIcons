@@ -12,8 +12,7 @@ import {ICON_SIZE_RANGE_PX, TRAY_STYLE_KEYS} from '../../const.js';
 
 // Shared between the reset button and the live preview, so a key added to a
 // style can't reset without repainting or the other way around. The symbolic
-// switch and the two chain toggles are page values rather than shell style
-// keys, but both consumers still need them.
+// switch and the chain toggles are page values, both consumers still need them.
 export const TRAY_ICON_STYLE_KEYS = Object.freeze([
     ...TRAY_STYLE_KEYS,
     'enable-symbolic-icons',

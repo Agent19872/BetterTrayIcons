@@ -99,7 +99,7 @@ export const PanelIndicator = GObject.registerClass({GTypeName: 'BetterTrayIcons
             this._overflowMenu.container._delegate = this;
             this._toggleButton.setOverflowMenu(this._overflowMenu);
 
-            const queueLayout = () => this._queueUpdateLayout();
+            const queueLayout = () => this.queueUpdateLayout();
 
             this._settingsSignals = [];
             for (const key of LAYOUT_KEYS)
@@ -108,7 +108,7 @@ export const PanelIndicator = GObject.registerClass({GTypeName: 'BetterTrayIcons
             this._lastLayoutSignature = '';
             this._settingsSignals.push(this._settings.connect('changed::app-configs', () => {
                 if (this._computeLayoutSignature() !== this._lastLayoutSignature)
-                    this._queueUpdateLayout();
+                    this.queueUpdateLayout();
             }));
 
             this._settingsSignals.push(this._settings.connect('changed::toggle-hover-menu',
@@ -122,7 +122,7 @@ export const PanelIndicator = GObject.registerClass({GTypeName: 'BetterTrayIcons
             this._colorSetWatch = connectColorSetChanges(this._settings, () => this._updateStyle());
 
             this._updateStyle();
-            this._queueUpdateLayout();
+            this.queueUpdateLayout();
 
             this._delegate = this;
         }
@@ -131,14 +131,14 @@ export const PanelIndicator = GObject.registerClass({GTypeName: 'BetterTrayIcons
             if (this._icons.has(id))
                 return;
             this._icons.set(id, actor);
-            this._queueUpdateLayout();
+            this.queueUpdateLayout();
         }
 
         removeIcon(id) {
             if (!this._icons.has(id))
                 return;
             this._icons.delete(id);
-            this._queueUpdateLayout();
+            this.queueUpdateLayout();
             this._onIconsChanged?.(id);
         }
 
@@ -198,7 +198,7 @@ export const PanelIndicator = GObject.registerClass({GTypeName: 'BetterTrayIcons
             return items;
         }
 
-        _queueUpdateLayout() {
+        queueUpdateLayout() {
             debounceTo(this, '_layoutUpdateId', LAYOUT_UPDATE_DELAY_MS, () => this._updateLayout());
         }
 
@@ -329,9 +329,9 @@ export const PanelIndicator = GObject.registerClass({GTypeName: 'BetterTrayIcons
                 this._overflowMenu.open();
         }
 
-        // DND grabs a bare actor in uiGroup, auto-hiding panels like
-        // Dash to Panel see no grab of their own and hide mid-drag.
-        // _sourceActor links the grab back to us in the panel.
+        // DND grabs a bare actor in uiGroup, an auto-hiding panel sees no grab
+        // of its own and hides mid-drag. _sourceActor links the grab back to us
+        // in the panel.
         _claimDragGrab() {
             const grabActor = global.stage.get_grab_actor();
             grabActor._sourceActor = this;
@@ -358,7 +358,7 @@ export const PanelIndicator = GObject.registerClass({GTypeName: 'BetterTrayIcons
             this._dropAccepted = false;
             if (this._needsLayoutAfterDrag) {
                 this._needsLayoutAfterDrag = false;
-                this._queueUpdateLayout();
+                this.queueUpdateLayout();
             }
 
             if (!this._menuRemovedForDrag)

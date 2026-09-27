@@ -50,6 +50,7 @@ Everything you need to tame the tray, and nothing you do not.
 &nbsp;✓&nbsp; **Independent styling** for tray icons, toggle button and overflow container<br>
 &nbsp;✓&nbsp; **Hover tooltips** with configurable side and delay<br>
 &nbsp;✓&nbsp; **Symbolic icon mode** for a clean, native look where supported<br>
+&nbsp;✓&nbsp; **Background apps** shown as tray icons and hidden from the Quick Settings menu<br>
 &nbsp;✓&nbsp; **Sync and backups** through JSON export and import with automatic backups
 
 ## Screenshots

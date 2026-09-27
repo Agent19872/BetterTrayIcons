@@ -6,9 +6,8 @@ import {disconnectSignal} from '../../shared/lifecycle.js';
 import {warn} from '../../shared/logging.js';
 import {ICON_SIZE_RANGE_PX, BORDER_RADIUS_MAX_PX, BORDER_WIDTH_MAX_PX} from '../../const.js';
 
-// What Better Panel shows for us, a catalog row and a settings page built from
-// this data alone. No create(), the host finds our indicator in
-// Main.panel.statusArea and moves it.
+// No create(), the host finds our indicator in Main.panel.statusArea and
+// moves it.
 const APPLET = {
     id: 'tray',
     area: 'right',

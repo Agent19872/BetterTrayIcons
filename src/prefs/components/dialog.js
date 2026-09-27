@@ -80,10 +80,9 @@ export function createFileFilter(name, patterns, mimeTypes = []) {
     return filter;
 }
 
-// Raises only the natural width, a size request would raise the minimum too and
-// a dialog whose content cannot shrink clips at the window edge. It has to be a
-// layout manager because GTK never calls the measure vfunc of a widget that has
-// one, and Adw.Bin has one.
+// A size request would raise the minimum too and a dialog whose content cannot
+// shrink clips at the window edge, so only the natural width goes up. GTK skips
+// the measure vfunc of a widget with a layout manager, and Adw.Bin has one.
 const NaturalWidthLayout = GObject.registerClass({GTypeName: 'BetterTrayIconsNaturalWidthLayout'},
     class NaturalWidthLayout extends Gtk.LayoutManager {
         // The content is wrapping labels, the default CONSTANT_SIZE would have

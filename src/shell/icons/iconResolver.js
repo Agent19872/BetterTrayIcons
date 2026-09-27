@@ -365,11 +365,14 @@ function _deviceIconSize(settings) {
 // Constructing St.IconTheme per resolution re-reads the theme index.
 let _sharedIconTheme = null;
 
+export function themeIconFile(iconName, sizePx) {
+    _sharedIconTheme ??= new St.IconTheme();
+    return _sharedIconTheme.lookup_icon(iconName, sizePx, 0)?.get_filename() ?? null;
+}
+
 function _themedIconFromName(iconName, settings, requireInTheme = true, appId = null, map = null) {
     const useSymbolic = settings.get_boolean('enable-symbolic-icons');
     const candidates = buildSymbolicCandidates(iconName, useSymbolic);
-    if (candidates.length === 0)
-        return null;
 
     let existing = null;
     let themeFile = null;
@@ -601,12 +604,7 @@ function _pixmapToPng(width, height, src) {
             height,
             width * 4
         );
-        if (!pixbuf)
-            return null;
-
         const [, pngBuffer] = pixbuf.save_to_bufferv('png', [], []);
-        if (pngBuffer.length === 0)
-            return null;
         return pngBuffer;
     } catch {
         return null;
