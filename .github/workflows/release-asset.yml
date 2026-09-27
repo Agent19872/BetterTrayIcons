@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
@@ -50,7 +50,7 @@ jobs:
 
       - name: Download CI artifact
         if: steps.check.outputs.is_release == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: ${{ steps.check.outputs.uuid }}
           run-id: ${{ github.event.workflow_run.id }}
@@ -108,7 +108,7 @@ jobs:
 
       - name: Attach asset to release
         if: steps.check.outputs.is_release == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.check.outputs.tag }}
           files: ${{ steps.check.outputs.uuid }}.zip
